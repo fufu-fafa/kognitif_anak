@@ -1,0 +1,666 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<title>Jejak Tumbuh: pemantau perkembangan kognitif anak</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#F6F4FB;--surface:#FFFFFF;--ink:#211B36;--muted:#6A6383;--line:#E3DEF1;
+  --brand:#5B3FD0;--brand-ink:#FFFFFF;--tint:#EFEAFC;
+  --d0:#6B4EE0;--d1:#E4572E;--d2:#16967F;--d3:#C98F00;--d4:#CF3F7C;
+  --yes:#16967F;--some:#C98F00;--no:#7C7495;
+  --warn-bg:#FFF3DC;--warn-ink:#5C3F00;--ok-bg:#E4F5F1;--ok-ink:#0B4A3E;
+  --hf:'Bricolage Grotesque','Segoe UI',system-ui,sans-serif;
+  --bf:'Figtree','Segoe UI',system-ui,sans-serif;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#15121F;--surface:#1F1B2E;--ink:#F0ECFA;--muted:#A79EC2;--line:#352F4D;
+    --brand:#9A85FF;--brand-ink:#15121F;--tint:#2A2445;
+    --d0:#9A85FF;--d1:#FF8562;--d2:#38C9AE;--d3:#F2B93B;--d4:#F27AA8;
+    --yes:#38C9AE;--some:#F2B93B;--no:#8F86AB;
+    --warn-bg:#3A2E12;--warn-ink:#FFE2A6;--ok-bg:#12352F;--ok-ink:#B6F0E4;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#15121F;--surface:#1F1B2E;--ink:#F0ECFA;--muted:#A79EC2;--line:#352F4D;
+  --brand:#9A85FF;--brand-ink:#15121F;--tint:#2A2445;
+  --d0:#9A85FF;--d1:#FF8562;--d2:#38C9AE;--d3:#F2B93B;--d4:#F27AA8;
+  --yes:#38C9AE;--some:#F2B93B;--no:#8F86AB;
+  --warn-bg:#3A2E12;--warn-ink:#FFE2A6;--ok-bg:#12352F;--ok-ink:#B6F0E4;
+}
+*,*::before,*::after{box-sizing:inherit}
+html{height:100%;scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;min-height:100%;background:var(--bg);color:var(--ink);font-family:var(--bf);font-size:16px;line-height:1.55;-webkit-text-size-adjust:100%}
+h1,h2,h3{font-family:var(--hf);line-height:1.15;margin:0;font-weight:700;letter-spacing:-.01em}
+p{margin:0}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:3px solid var(--brand);outline-offset:2px}
+.wrap{max-width:900px;margin:0 auto;padding:16px 16px 56px}
+ 
+/* header */
+.top{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:8px 0 16px}
+.brand{display:flex;align-items:center;gap:10px;margin-right:auto}
+.brand svg{width:34px;height:34px;flex:none}
+.brand b{font-family:var(--hf);font-size:1.25rem;letter-spacing:-.01em}
+.sel{background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:8px 14px;max-width:180px}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:9px 16px;font-weight:600}
+.btn:hover{border-color:var(--brand)}
+.btn.pri{background:var(--brand);border-color:var(--brand);color:var(--brand-ink)}
+.btn.pri:hover{filter:brightness(1.08)}
+.btn.danger{color:var(--d1);border-color:var(--d1)}
+.btn.sm{padding:6px 12px;font-size:.9rem}
+ 
+/* tabs */
+.tabs{display:flex;gap:4px;background:var(--tint);border-radius:999px;padding:4px;margin-bottom:20px;overflow-x:auto}
+.tabs button{flex:1;border:0;background:transparent;border-radius:999px;padding:9px 14px;font-weight:600;color:var(--muted);white-space:nowrap}
+.tabs button[aria-current="page"]{background:var(--surface);color:var(--ink)}
+ 
+/* generic */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:22px;padding:20px}
+.stack{display:grid;gap:16px}
+.muted{color:var(--muted)}
+.small{font-size:.9rem}
+.title{font-size:1.9rem;margin-bottom:4px}
+.h2{font-size:1.25rem;margin-bottom:12px}
+.note{border-radius:14px;padding:12px 14px;font-size:.95rem}
+.note.warn{background:var(--warn-bg);color:var(--warn-ink)}
+.note.ok{background:var(--ok-bg);color:var(--ok-ink)}
+.note.info{background:var(--tint)}
+.grid2{display:grid;gap:16px;grid-template-columns:1fr}
+@media (min-width:760px){.grid2{grid-template-columns:minmax(0,320px) 1fr}}
+label{display:block;font-weight:600;margin-bottom:6px}
+input[type=text],input[type=date],select.f,textarea{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:11px 12px}
+.field{margin-bottom:14px}
+.err{color:var(--d1);font-weight:600;margin-bottom:10px}
+ 
+/* rings */
+.rings{display:block;width:100%;max-width:280px;margin:0 auto}
+.rings .track{stroke:var(--line)}
+.rings .arc{transition:stroke-dasharray .9s cubic-bezier(.2,.7,.2,1)}
+.rings.anim .arc{animation:grow 1.1s cubic-bezier(.2,.7,.2,1) both}
+@keyframes grow{from{stroke-dasharray:0 999}}
+.legend{display:grid;gap:10px}
+.lg{display:grid;grid-template-columns:14px 1fr auto;gap:10px;align-items:center}
+.dot{width:14px;height:14px;border-radius:5px}
+.lg b{font-weight:600}
+.lg .d{grid-column:2/4;margin-top:-6px}
+.pct{font-family:var(--hf);font-weight:700}
+ 
+/* milestone */
+.chips{display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;margin-bottom:12px}
+.chip{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:7px 14px;white-space:nowrap;font-weight:500}
+.chip[aria-pressed="true"]{background:var(--brand);border-color:var(--brand);color:var(--brand-ink)}
+.dom{margin-bottom:16px}
+.dom-h{display:flex;align-items:center;gap:10px;margin-bottom:4px}
+.bar{height:8px;border-radius:99px;background:var(--line);overflow:hidden;margin:8px 0 6px}
+.bar i{display:block;height:100%;border-radius:99px}
+.item{display:grid;gap:10px;padding:14px 0;border-top:1px solid var(--line)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;width:max-content;max-width:100%}
+.seg button{border:0;background:transparent;padding:7px 15px;font-weight:600;color:var(--muted)}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button[aria-pressed="true"][data-v="0"]{background:var(--no);color:#fff}
+.seg button[aria-pressed="true"][data-v="1"]{background:var(--some);color:#fff}
+.seg button[aria-pressed="true"][data-v="2"]{background:var(--yes);color:#fff}
+@media (min-width:640px){.item{grid-template-columns:1fr auto;align-items:center;gap:20px}}
+ 
+/* stimulasi */
+.tips{display:grid;gap:12px}
+.tip{background:var(--surface);border:1px solid var(--line);border-left-width:6px;border-radius:18px;padding:16px 18px}
+.tip-h{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.tip h3{font-size:1.15rem;margin-bottom:6px}
+.tip .for{margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
+.stt{border:1.5px solid var(--line);border-radius:99px;padding:1px 10px;font-size:.82rem;font-weight:600;margin-left:auto}
+.rules{margin:0;padding-left:20px;display:grid;gap:4px}
+ 
+/* report */
+.rt{width:100%;border-collapse:collapse;font-size:.95rem}
+.rt td,.rt th{padding:8px 6px;border-top:1px solid var(--line);text-align:left;vertical-align:top}
+.rt th{font-family:var(--hf)}
+.st{font-weight:600;white-space:nowrap}
+.row{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+.empty{text-align:center;padding:28px 12px}
+.foot{margin-top:28px;font-size:.85rem;color:var(--muted)}
+textarea{min-height:96px;resize:vertical}
+ 
+@media print{
+  :root{--bg:#fff;--surface:#fff;--ink:#000;--muted:#444;--line:#ccc}
+  body{background:#fff}
+  .noprint{display:none!important}
+  .card{border:0;padding:0}
+  .wrap{padding:0}
+}
+@media (prefers-reduced-motion:reduce){
+  .rings.anim .arc{animation:none}.rings .arc{transition:none}
+}
+</style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+ 
+<script>
+"use strict";
+/* ---------- data ---------- */
+const KEY = "jejaktumbuh:v1";
+const DOMAINS = [
+  { k: "Attention", c: "var(--d0)", d: "Fokus dan berbagi perhatian" },
+  { k: "Working memory", c: "var(--d1)", d: "Menyimpan dan memakai informasi sesaat" },
+  { k: "Problem solving", c: "var(--d2)", d: "Mencoba, mencocokkan, menyusun" },
+  { k: "Language", c: "var(--d3)", d: "Memahami dan mengungkapkan" },
+  { k: "Social cognition", c: "var(--d4)", d: "Memahami orang lain dan aturan" }
+];
+const BANDS = [
+  { id: "b1", min: 6, max: 12, label: "6–12 bulan", items: [
+    ["Menoleh ke arah suara ketika namanya dipanggil", "Menatap mainan baru beberapa detik sebelum beralih"],
+    ["Mencari benda yang disembunyikan sebagian di bawah kain (object permanence)", "Menunggu momen “ba!” saat main cilukba"],
+    ["Memindahkan mainan dari satu tangan ke tangan lain", "Sengaja menjatuhkan benda untuk melihat apa yang terjadi"],
+    ["Mengoceh dengan rangkaian suku kata (ba-ba, ma-ma)", "Berhenti sejenak saat mendengar “jangan”"],
+    ["Membedakan orang terdekat dari orang asing", "Meniru gerakan sederhana seperti melambai"]
+  ]},
+  { id: "b2", min: 12, max: 24, label: "12–24 bulan", items: [
+    ["Bermain dengan satu mainan sekitar 2–3 menit", "Mengikuti arah tunjuk jari orang dewasa (joint attention)"],
+    ["Mencari benda yang disembunyikan sepenuhnya di tempat lain", "Ingat tempat barang yang biasa disimpan"],
+    ["Menyusun 2–4 balok", "Memasukkan bentuk sederhana ke shape sorter"],
+    ["Memakai 10 kata atau lebih dengan makna jelas", "Menunjuk bagian tubuh saat diminta"],
+    ["Meniru pekerjaan rumah sederhana (menyapu, pura-pura menelepon)", "Menunjuk untuk membagi minat, misalnya ke pesawat di langit"]
+  ]},
+  { id: "b3", min: 24, max: 36, label: "24–36 bulan", items: [
+    ["Menyimak buku cerita pendek sampai selesai", "Menyelesaikan puzzle 3–4 keping dengan fokus beberapa menit"],
+    ["Mengikuti instruksi dua langkah (“ambil sepatu, taruh di rak”)", "Melengkapi bagian lagu atau rutinitas yang sengaja dilewatkan"],
+    ["Mencocokkan warna atau bentuk", "Pretend play dengan beberapa langkah (menyuapi boneka lalu menidurkannya)"],
+    ["Membuat kalimat 2–3 kata", "Sekitar separuh ucapannya dipahami orang di luar keluarga inti"],
+    ["Menyebut namanya sendiri dan nama anggota keluarga", "Menunjukkan empati sederhana, misalnya menghibur yang menangis"]
+  ]},
+  { id: "b4", min: 36, max: 48, label: "3–4 tahun", items: [
+    ["Bertahan pada satu kegiatan 5–10 menit", "Berpindah kegiatan dengan protes ringan saja (cognitive flexibility)"],
+    ["Menceritakan ulang kejadian yang baru terjadi", "Menghitung 1–3 benda dengan tepat (one-to-one correspondence)"],
+    ["Menggambar lingkaran", "Menyelesaikan puzzle 4–6 keping"],
+    ["Memakai kalimat 4 kata atau lebih", "Bertanya “apa” dan “kenapa”"],
+    ["Bermain bergiliran dengan teman", "Menyebut perasaan dasar (senang, sedih, marah)"]
+  ]},
+  { id: "b5", min: 48, max: 60, label: "4–5 tahun", items: [
+    ["Mengerjakan aktivitas terstruktur 10–15 menit", "Menunggu giliran tanpa terlalu gelisah (inhibitory control)"],
+    ["Mengikuti instruksi tiga langkah", "Mengulang 3–4 kata atau angka berurutan (digit span)"],
+    ["Menggambar orang dengan 4 bagian tubuh atau lebih", "Mengelompokkan benda menurut kategori (hewan, kendaraan)"],
+    ["Menceritakan cerita sederhana dengan awal dan akhir", "Memahami posisi: di atas, di bawah, di samping"],
+    ["Mengikuti aturan permainan sederhana", "Paham bahwa orang lain bisa berpikir berbeda (early theory of mind)"]
+  ]},
+  { id: "b6", min: 60, max: 72, label: "5–6 tahun", items: [
+    ["Fokus pada satu tugas 15–20 menit", "Tetap menyelesaikan tugas meski ada gangguan ringan"],
+    ["Menghitung sampai 20 dan mengenali sebagian angka", "Mengingat aturan permainan baru setelah dijelaskan sekali"],
+    ["Menyalin beberapa huruf atau menulis namanya", "Menyusun gambar berurutan menjadi cerita (sequencing)"],
+    ["Memakai kalimat kompleks dengan “karena” atau “kalau”", "Mengenali bunyi awal kata (phonological awareness)"],
+    ["Menyelesaikan konflik kecil dengan kata-kata", "Menjelaskan alasan di balik perasaannya"]
+  ]}
+];
+const STATUS = ["Belum", "Kadang", "Sudah"];
+
+/* Saran stimulasi: TIPS[band][domain][item] = [judul, cara melakukan]
+   Urutannya sama persis dengan BANDS[..].items, jadi setiap saran terhubung ke satu milestone. */
+const TIPS = {
+  b1: [
+    [["Panggil nama dari samping", "Saat bayi tenang, panggil namanya dengan suara hangat dari samping atau belakang, lalu tersenyum begitu ia menoleh. Cukup beberapa kali sehari, dan jangan memanggil saat ia sedang asyik fokus pada sesuatu."],
+     ["Tunjukkan satu mainan menarik", "Pegang satu mainan berwarna kontras sekitar 30 cm dari wajahnya, lalu gerakkan pelan ke kiri dan kanan. Beri jeda supaya ia sempat menatap sebelum kamu mengganti mainan."]],
+    [["Cilukba dengan kain tipis", "Tutup sebagian mainan favoritnya dengan kain tipis sambil ia melihat, lalu tanya “mana ya?”. Rayakan saat ia menarik kainnya. Ini melatih object permanence."],
+     ["Cilukba dengan jeda", "Sembunyikan wajahmu di balik tangan, tahan 2–3 detik, lalu muncul dengan “ba!”. Perpanjang jedanya sedikit demi sedikit supaya ia belajar mengantisipasi."]],
+    [["Sodorkan mainan dari tengah", "Sodorkan mainan tepat di depan dadanya supaya ia perlu memakai kedua tangan. Pilih mainan yang mudah digenggam dan aman dimasukkan ke mulut."],
+     ["Main jatuhkan dan ambil", "Biarkan ia menjatuhkan mainan dari kursi makan atau bouncer, lalu kembalikan sambil menyebut “jatuh!”. Ia sedang belajar tentang sebab dan akibat."]],
+    [["Balas ocehannya", "Tirukan suku katanya (“ba-ba”), diam sejenak, lalu tunggu ia membalas. Pola bergantian ini adalah dasar percakapan."],
+     ["Ucapkan “jangan” dengan konsisten", "Untuk hal berbahaya, ucapkan “jangan” dengan nada tenang tapi tegas, lalu alihkan ke benda yang boleh dipegang. Konsisten lebih penting daripada keras."]],
+    [["Kenalkan orang baru pelan-pelan", "Biarkan ia menatap orang baru dari pangkuanmu dulu. Jika ia tampak nyaman, minta orang itu mendekat perlahan sambil bicara lembut."],
+     ["Ajak melambai dan bertepuk tangan", "Lambaikan tangan sambil berkata “dadah” saat berpisah, lalu tunggu. Bantu gerakkan tangannya bila perlu, dan puji setiap tiruan sekecil apa pun."]]
+  ],
+  b2: [
+    [["Duduk bersama satu mainan", "Sediakan 2–3 mainan saja, bukan sekeranjang penuh. Bermainlah di sampingnya dan ikuti apa yang ia lakukan supaya ia betah lebih lama."],
+     ["Tunjuk sambil menyebut nama", "Tunjuk benda menarik (burung, kendaraan) sambil berkata “lihat, burung!”. Tunggu ia menoleh, lalu tatap matanya dan beri komentar. Ini melatih joint attention."]],
+    [["Sembunyikan mainan di bawah gelas", "Sembunyikan mainan di bawah satu gelas sementara ia melihat, lalu minta ia mencarinya. Setelah lancar, coba dua atau tiga gelas."],
+     ["Tanya “di mana ya?”", "Biasakan menyimpan sepatu, botol, atau bola di tempat yang sama. Lalu tanya “sepatunya di mana?” dan biarkan ia menunjuk atau mengambilnya."]],
+    [["Bangun menara balok bersama", "Susun menara 2 balok, lalu beri satu balok dan biarkan ia menambahkannya. Rayakan saat menaranya runtuh, itu bagian dari belajar."],
+     ["Mulai dengan shape sorter satu bentuk", "Sisakan hanya satu bentuk dan satu lubang yang cocok. Tambah bentuk lain setelah ia berhasil. Boleh menuntun tangannya di awal."]],
+    [["Beri nama pada kegiatan sehari-hari", "Ceritakan apa yang sedang kalian lakukan dengan kalimat pendek: “kita cuci tangan”, “ini sendok”. Ulangi kata yang sama di situasi yang sama."],
+     ["Nyanyi sambil menyentuh bagian tubuh", "Nyanyikan lagu yang menyebut kepala, hidung, atau perut sambil menyentuh bagian itu. Lalu minta ia menunjuk bagian yang sama di tubuhnya atau bonekanya."]],
+    [["Beri alat kecil untuk ikut bekerja", "Berikan lap kecil, sapu mini, atau telepon mainan. Kerjakan tugasmu di dekatnya dan biarkan ia meniru tanpa dikoreksi."],
+     ["Balas setiap tunjukannya", "Saat ia menunjuk sesuatu, lihat ke arah itu dan beri komentar: “iya, pesawat!”. Balasan ini mengajarkan bahwa berbagi minat itu menyenangkan."]]
+  ],
+  b3: [
+    [["Baca buku bergambar tiap hari", "Pilih buku tipis dengan gambar besar dan biarkan ia membalik halaman. Berhenti di gambar yang menarik dan tanya “itu apa?”. Pilih waktu saat ia tenang, misalnya sebelum tidur."],
+     ["Puzzle dengan bantuan bertahap", "Mulai dari puzzle 2–3 keping yang punya pegangan. Beri petunjuk dulu (tunjuk tempatnya), lalu kurangi bantuan seiring ia makin mahir."]],
+    [["Permainan “ambil lalu taruh”", "Beri instruksi dua langkah yang berhubungan, seperti “ambil bola, masukkan ke keranjang”. Jika ia hanya melakukan langkah pertama, ulangi pelan-pelan sambil memperagakan."],
+     ["Nyanyi lalu berhenti", "Nyanyikan lagu yang sudah ia hafal, lalu berhenti sebelum kata terakhir. Tunggu beberapa detik supaya ia yang melengkapinya."]],
+    [["Cocokkan dua kelompok benda", "Sediakan dua mangkuk dan beberapa benda dengan dua warna. Minta ia menaruh benda merah di satu mangkuk dan biru di mangkuk lain. Mulailah dengan dua warna saja."],
+     ["Pretend play merawat boneka", "Beri boneka, sendok, dan selimut. Peragakan urutannya: menyuapi, mengelap mulut, menidurkan. Setelah itu biarkan ia yang memimpin."]],
+    [["Perluas ucapannya satu kata", "Jika ia berkata “susu”, balas “mau susu putih?”. Tambahkan satu kata saja dari yang ia ucapkan, tanpa menyuruhnya mengulang."],
+     ["Contohkan ucapan yang benar", "Ulangi kata yang keliru dengan pengucapan yang tepat, tanpa menegur: ia bilang “cucu”, kamu balas “oh, susu.” Hindari meminta ia mengulang berkali-kali."]],
+    [["Lihat foto keluarga bersama", "Tunjukkan foto keluarga dan tanya “ini siapa?”. Sebut namanya bersama-sama, lalu biarkan ia yang menyebutnya."],
+     ["Bicarakan perasaan orang lain", "Saat ada yang sedih, tunjukkan: “adik menangis, mungkin sedih. Kita peluk yuk.” Beri pujian saat ia mencoba menghibur."]]
+  ],
+  b4: [
+    [["Proyek kecil bersama", "Pilih kegiatan yang ia suka, seperti menyusun balok atau menempel stiker, dan sisihkan 5–10 menit tanpa gangguan. Matikan TV di latar belakang."],
+     ["Beri peringatan sebelum ganti kegiatan", "Katakan “sebentar lagi kita beres-beres” lima menit dan satu menit sebelumnya. Timer visual juga membantu. Ini melatih cognitive flexibility."]],
+    [["Ngobrol tentang hari ini", "Sebelum tidur, tanya “tadi main apa?” dan “siapa yang ada di sana?”. Bantu dengan pertanyaan pancingan, lalu biarkan ia melanjutkan."],
+     ["Hitung sambil menyentuh", "Hitung 3 buah atau 3 mobil-mobilan sambil menyentuh satu per satu. Lalu minta “ambilkan 2 apel” untuk melatih one-to-one correspondence."]],
+    [["Menggambar bebas dulu", "Sediakan krayon tebal dan kertas besar. Buat lingkaran pelan-pelan di depannya, lalu ajak ia mencoba. Jangan koreksi bentuknya, fokus pada keseruan."],
+     ["Puzzle dengan trik tepi dan warna", "Ajari ia mencari keping yang warnanya mirip atau yang punya tepi lurus. Beri satu petunjuk saat ia macet, bukan jawabannya."]],
+    [["Contohkan kalimat lengkap", "Saat ia berkata “mau main bola”, balas “kamu mau main bola di taman?”. Tambahkan kata tanpa menuntut ia mengulang."],
+     ["Sambut pertanyaannya", "Jawab singkat, lalu balik bertanya “menurutmu kenapa?”. Kalau kamu tidak tahu jawabannya, cari tahu bersama."]],
+    [["Main bergiliran", "Mainkan lempar bola atau menggulirkan mobil bergantian. Ucapkan “giliranmu… sekarang giliranku”. Mulai dari dua orang saja."],
+     ["Beri nama pada perasaan", "Saat ia marah atau senang, sebutkan: “kamu kesal ya, mainannya diambil.” Membaca buku yang menampilkan ekspresi wajah juga membantu."]]
+  ],
+  b5: [
+    [["Kegiatan dengan awal dan akhir yang jelas", "Pilih kegiatan seperti menyusun lego sesuai contoh atau membuat kolase. Jelaskan langkahnya dan tandai saat selesai dengan stiker atau ceklis bergambar."],
+     ["Permainan patung-patungan", "Mainkan permainan yang menuntutnya berhenti atau menunggu aba-aba, seperti patung-patungan atau “Simon says”. Ini melatih inhibitory control dengan cara yang menyenangkan."]],
+    [["Misi tiga langkah", "Beri misi seperti “ambil topi, pakai, lalu tunggu di pintu”. Mulai dari dua langkah, lalu naikkan menjadi tiga bila sudah lancar."],
+     ["Ulangi urutan kata", "Sebut tiga kata (“kucing, bola, sepatu”), lalu minta ia mengulang urutannya. Naikkan menjadi empat saat ia siap. Cukup beberapa kali agar tetap seru. Ini melatih digit span."]],
+    [["Gambar orang bersama", "Sambil menggambar, tanya “orangnya punya apa lagi?” dan tambahkan bagian tubuh satu per satu. Biarkan ia menambah bagian yang ia ingat."],
+     ["Permainan sortir", "Campur mainan hewan dan kendaraan, lalu minta ia memisahkannya. Setelah lancar, coba kategori baru seperti makanan, pakaian, atau alat tulis."]],
+    [["Cerita tiga bagian", "Ajak ia menceritakan buku atau kejadian dengan pola “pertama, lalu, akhirnya”. Bantu dengan pertanyaan “terus bagaimana?”."],
+     ["Cari harta karun", "Sembunyikan mainan dan beri petunjuk seperti “di bawah meja” atau “di samping lemari”. Setelah itu gantian ia yang memberi petunjuk."]],
+    [["Board game sederhana", "Mainkan ular tangga atau memory game. Jelaskan aturan dengan singkat, dan bahas dengan tenang saat ada yang melanggar."],
+     ["Tanya “menurut dia bagaimana?”", "Saat membaca buku, tanya “tokoh ini tahu tidak, mainannya ada di mana?”. Cerita dengan tokoh yang salah paham melatih early theory of mind."]]
+  ],
+  b6: [
+    [["Proyek yang punya hasil akhir", "Ajak membuat sesuatu yang selesai dalam 15–20 menit, seperti puzzle 24 keping atau kartu ucapan. Beri jeda minum atau bergerak jika perlu."],
+     ["Latih fokus dengan gangguan ringan", "Mulai dari tempat tenang, lalu tambahkan sedikit suara latar. Ingatkan tujuan tugasnya, dan puji saat ia kembali fokus sendiri."]],
+    [["Hitung benda sehari-hari", "Hitung anak tangga, sendok, atau langkah menuju pintu. Tunjukkan angka tertulisnya dan ajak ia mencari angka yang sama di sekitar rumah."],
+     ["Jelaskan sekali, lalu ia yang menjelaskan ulang", "Setelah menjelaskan aturan permainan baru, minta ia menerangkannya kembali ke boneka atau anggota keluarga lain. Ini menguatkan working memory."]],
+    [["Menulis nama dengan cara seru", "Tulis namanya di pasir, tepung, atau dengan krayon besar. Beri garis putus-putus sebagai panduan, lalu kurangi bertahap."],
+     ["Susun kartu gambar berurutan", "Buat 3–4 gambar kegiatan (bangun, sikat gigi, sarapan), acak, lalu minta ia menyusun dan menceritakannya. Ini melatih sequencing."]],
+    [["Latihan “karena” dan “kalau”", "Ajukan pertanyaan seperti “kenapa kita pakai payung?” dan “kalau hujan, kita mau apa?”. Bantu dengan awal kalimat bila ia terhenti."],
+     ["Permainan bunyi awal", "Tanya “apa bunyi awal kata ‘bola’?” atau “sebutkan benda yang diawali /m/”. Mainkan juga rima sederhana. Ini menopang phonological awareness sebelum belajar membaca."]],
+    [["Latih kalimat “aku mau… tapi…”", "Saat ia berebut mainan, ajari kalimat seperti “aku mau pakai sekarang, boleh gantian?”. Peragakan dulu lewat dua boneka."],
+     ["Tanya “kenapa kamu merasa begitu?”", "Setelah ia menyebut perasaannya, tanya penyebabnya dan tawarkan pilihan jika ia bingung. Terima jawabannya tanpa menghakimi."]]
+  ]
+};
+const RULES = [
+  "Cukup 5–10 menit, dan berhenti saat anak mulai bosan.",
+  "Bantu sedikit di atas kemampuannya saat ini, tapi jangan menyelesaikan tugas untuknya.",
+  "Selipkan di rutinitas harian seperti mandi, makan, atau jalan pagi.",
+  "Puji usahanya, bukan hanya hasilnya."
+];
+
+/* ---------- state ---------- */
+function load() { try { const r = localStorage.getItem(KEY); if (r) return JSON.parse(r); } catch (e) {} return null; }
+const data = load() || { children: [], active: null };
+const ui = { tab: "ringkasan", band: null, adding: false, draft: { name: "", dob: "" }, err: "",
+  confirmDel: false, anim: true, showText: false, copied: false, focus: null, showDone: false };
+function save() { try { localStorage.setItem(KEY, JSON.stringify(data)); } catch (e) {} }
+ 
+/* ---------- helpers ---------- */
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const pad = n => String(n).padStart(2, "0");
+function todayISO() { const t = new Date(); return t.getFullYear() + "-" + pad(t.getMonth() + 1) + "-" + pad(t.getDate()); }
+function fmtDate(iso) { try { return new Date(iso + "T00:00:00").toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" }); } catch (e) { return iso; } }
+function shortDate(iso) { const p = iso.split("-"); return p[2] + "/" + p[1]; }
+const fmt = n => (Number.isInteger(n) ? String(n) : n.toFixed(1).replace(".", ","));
+function ageM(dob) {
+  const b = new Date(dob + "T00:00:00"), n = new Date();
+  let m = (n.getFullYear() - b.getFullYear()) * 12 + n.getMonth() - b.getMonth();
+  if (n.getDate() < b.getDate()) m--;
+  return Math.max(0, m);
+}
+function ageLabel(m) { const y = Math.floor(m / 12), r = m % 12; return y === 0 ? r + " bulan" : y + " tahun" + (r ? " " + r + " bulan" : ""); }
+function bandFor(m) { return BANDS.find(b => m >= b.min && m < b.max) || (m < 6 ? BANDS[0] : BANDS[BANDS.length - 1]); }
+function child() { return data.children.find(c => c.id === data.active) || null; }
+function curBand(c) { return (ui.band && BANDS.find(b => b.id === ui.band)) || bandFor(ageM(c.dob)); }
+ 
+function stats(c, band) {
+  const per = DOMAINS.map((d, di) => {
+    let sum = 0, ans = 0, bel = 0;
+    band.items[di].forEach((_, ii) => {
+      const m = c.marks[band.id + ":" + di + ":" + ii];
+      if (m) { ans++; if (m.v === 2) sum += 1; else if (m.v === 1) sum += 0.5; else bel++; }
+    });
+    return { sum, ans, bel, total: band.items[di].length, pct: sum / band.items[di].length };
+  });
+  const t = per.reduce((a, p) => ({ sum: a.sum + p.sum, ans: a.ans + p.ans, bel: a.bel + p.bel, total: a.total + p.total }), { sum: 0, ans: 0, bel: 0, total: 0 });
+  return { per, ...t, pct: t.sum / t.total };
+}
+function missedInBand(c, band) {
+  let n = 0;
+  DOMAINS.forEach((d, di) => band.items[di].forEach((_, ii) => {
+    const mk = c.marks[band.id + ":" + di + ":" + ii];
+    if (!mk || mk.v !== 2) n++;
+  }));
+  return n;
+}
+function pastMissed(c) {
+  const m = ageM(c.dob);
+  const details = BANDS.filter(b => b.max <= m).map(b => ({ band: b, n: missedInBand(c, b) })).filter(x => x.n > 0);
+  return { total: details.reduce((a, x) => a + x.n, 0), details };
+}
+function snapshot(c, bandId) {
+  const band = BANDS.find(b => b.id === bandId), st = stats(c, band), d = todayISO();
+  c.history = c.history.filter(h => !(h.d === d && h.band === bandId));
+  if (st.ans > 0) c.history.push({ d, band: bandId, pct: Math.round(st.pct * 100), n: st.ans });
+}
+function lastCheck(c) {
+  let last = null;
+  Object.values(c.marks).forEach(m => { if (!last || m.d > last) last = m.d; });
+  return last;
+}
+function daysSince(iso) { return Math.floor((new Date(todayISO() + "T00:00:00") - new Date(iso + "T00:00:00")) / 86400000); }
+ 
+/* ---------- views ---------- */
+function header() {
+  const c = child();
+  const opts = data.children.map(x => `<option value="${x.id}" ${x.id === data.active ? "selected" : ""}>${esc(x.name)}</option>`).join("");
+  return `<header class="top noprint">
+    <div class="brand">
+      <svg viewBox="0 0 34 34" aria-hidden="true"><circle cx="17" cy="17" r="15" fill="none" stroke="var(--d0)" stroke-width="3"/><circle cx="17" cy="17" r="9.5" fill="none" stroke="var(--d1)" stroke-width="3" stroke-dasharray="40 100" stroke-linecap="round"/><circle cx="17" cy="17" r="4" fill="var(--d2)"/></svg>
+      <b>Jejak Tumbuh</b>
+    </div>
+    ${data.children.length > 1 ? `<select class="sel" data-act="switch" aria-label="Pilih anak">${opts}</select>` : ""}
+    ${c ? `<button class="btn sm" data-act="showadd">Tambah anak</button>` : ""}
+  </header>`;
+}
+function tabs() {
+  const T = [["ringkasan", "Ringkasan"], ["milestone", "Milestone"], ["stimulasi", "Stimulasi"], ["laporan", "Laporan"]];
+  return `<nav class="tabs noprint" aria-label="Menu utama">${T.map(t => `<button data-act="tab" data-t="${t[0]}" ${ui.tab === t[0] ? 'aria-current="page"' : ""}>${t[1]}</button>`).join("")}</nav>`;
+}
+ 
+function viewAdd() {
+  const first = data.children.length === 0;
+  return `<section class="card" style="max-width:520px;margin:${first ? "8vh" : "0"} auto 0">
+    <h1 class="title">${first ? "Mulai memantau tumbuh kembang si kecil" : "Tambah anak"}</h1>
+    <p class="muted" style="margin-bottom:18px">${first ? "Isi nama dan tanggal lahir. Data tersimpan di peramban ini saja dan tidak dikirim ke mana pun." : "Setiap anak punya checklist, saran stimulasi, dan laporan sendiri."}</p>
+    ${ui.err ? `<p class="err" role="alert">${esc(ui.err)}</p>` : ""}
+    <div class="field"><label for="nm">Nama panggilan</label><input id="nm" type="text" maxlength="40" value="${esc(ui.draft.name)}" data-in="dname" autocomplete="off"></div>
+    <div class="field"><label for="dob">Tanggal lahir</label><input id="dob" type="date" max="${todayISO()}" value="${esc(ui.draft.dob)}" data-in="ddob"></div>
+    <div class="row" style="margin-top:6px">
+      <button class="btn pri" data-act="addchild">Simpan profil</button>
+      ${first ? "" : `<button class="btn" data-act="canceladd">Batal</button>`}
+    </div>
+  </section>`;
+}
+ 
+function rings(st, anim) {
+  const radii = [88, 74, 60, 46, 32];
+  const arcs = DOMAINS.map((d, i) => {
+    const r = radii[i], circ = 2 * Math.PI * r, len = Math.max(0, Math.min(1, st.per[i].pct)) * circ;
+    return `<circle class="track" cx="100" cy="100" r="${r}" fill="none" stroke-width="9"/>
+      <circle class="arc" cx="100" cy="100" r="${r}" fill="none" stroke="${d.c}" stroke-width="9" stroke-linecap="round" stroke-dasharray="${len.toFixed(1)} ${circ.toFixed(1)}" transform="rotate(-90 100 100)" ${len < 0.5 ? 'style="display:none"' : ""}/>`;
+  }).join("");
+  return `<svg class="rings ${anim ? "anim" : ""}" viewBox="0 0 200 200" role="img" aria-label="Kemajuan milestone: ${Math.round(st.pct * 100)} persen tercapai">
+    ${arcs}
+    <text x="100" y="104" text-anchor="middle" font-family="var(--hf)" font-weight="700" font-size="20" fill="var(--ink)">${Math.round(st.pct * 100)}%</text>
+    <text x="100" y="120" text-anchor="middle" font-size="9" fill="var(--muted)">tercapai</text>
+  </svg>`;
+}
+ 
+function trend(c, band) {
+  const pts = c.history.filter(h => h.band === band.id).sort((a, b) => a.d.localeCompare(b.d)).slice(-12);
+  if (pts.length === 0) return `<p class="muted small">Grafik muncul setelah kamu mengisi milestone pertama.</p>`;
+  const W = 320, H = 150, L = 30, R = 10, T = 10, B = 24;
+  const x = i => pts.length === 1 ? (L + W - R) / 2 : L + (i * (W - L - R)) / (pts.length - 1);
+  const y = v => T + (1 - v / 100) * (H - T - B);
+  const line = pts.map((p, i) => (i ? "L" : "M") + x(i).toFixed(1) + " " + y(p.pct).toFixed(1)).join(" ");
+  const grid = [0, 50, 100].map(v => `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/><text x="${L - 6}" y="${y(v) + 3}" text-anchor="end" font-size="9" fill="var(--muted)">${v}</text>`).join("");
+  const dots = pts.map((p, i) => `<circle cx="${x(i)}" cy="${y(p.pct)}" r="4" fill="var(--brand)"/><text x="${x(i)}" y="${H - 8}" text-anchor="middle" font-size="9" fill="var(--muted)">${shortDate(p.d)}</text>`).join("");
+  return `<div style="overflow-x:auto"><svg viewBox="0 0 ${W} ${H}" style="width:100%;min-width:280px;max-width:520px" role="img" aria-label="Grafik kemajuan milestone dari waktu ke waktu">${grid}${pts.length > 1 ? `<path d="${line}" fill="none" stroke="var(--brand)" stroke-width="2.5" stroke-linejoin="round"/>` : ""}${dots}</svg></div>
+  <p class="muted small">Persentase milestone yang tercapai pada rentang ${esc(band.label)}, tiap kali kamu memperbarui checklist.</p>`;
+}
+ 
+function insight(st, band) {
+  const go = `<button class="btn sm" style="margin-top:8px" data-act="tab" data-t="stimulasi">Lihat saran stimulasi</button>`;
+  if (st.ans === 0) return `<div class="note info">Belum ada data. Buka tab <b>Milestone</b> dan tandai apa yang sudah terlihat pada anak untuk rentang ${esc(band.label)}.</div>`;
+  if (st.ans < st.total * 0.8) return `<div class="note info">Baru ${st.ans} dari ${st.total} milestone terisi. Lengkapi dulu supaya gambarannya lebih akurat. Saran stimulasi tetap bisa kamu lihat sambil jalan.<br>${go}</div>`;
+  const dm = st.per.map((p, i) => ({ p, i })).filter(o => o.p.bel >= 2).map(o => DOMAINS[o.i].k);
+  if (st.bel >= 4 || dm.length) {
+    return `<div class="note warn"><b>Ada beberapa milestone yang belum tercapai${dm.length ? " (terutama di " + esc(dm.join(", ")) + ")" : ""}.</b> Ini belum tentu berarti ada masalah, karena laju tiap anak berbeda. Coba aktivitas di tab Stimulasi secara rutin. Kalau polanya bertahan beberapa minggu, bicarakan dengan dokter anak atau psikolog anak dan bawa laporan dari tab Laporan.<br>${go}</div>`;
+  }
+  return `<div class="note ok">Sebagian besar milestone pada rentang usia ini sudah atau mulai tercapai. Lanjutkan pengecekan berkala, dan pakai saran di tab Stimulasi untuk menguatkan yang masih “Kadang”.<br>${go}</div>`;
+}
+ 
+function viewRingkasan(c) {
+  const m = ageM(c.dob), band = bandFor(m), st = stats(c, band);
+  const lc = lastCheck(c), ds = lc ? daysSince(lc) : null;
+  const past = pastMissed(c);
+  const rangeNote = m < 6 ? `Usia ${esc(c.name)} di bawah rentang checklist (mulai 6 bulan). Checklist 6–12 bulan ditampilkan sebagai pratinjau.` : m >= 72 ? `Usia ${esc(c.name)} melewati rentang checklist (sampai 6 tahun). Checklist 5–6 tahun ditampilkan.` : "";
+  const pastNote = past.total ? `<div class="note warn"><b>${past.total} milestone dari rentang usia sebelumnya (${past.details.map(x => esc(x.band.label)).join(", ")}) belum tercapai atau belum diisi.</b> Rentang usia itu sudah terlewat untuk ${esc(c.name)}, jadi sebaiknya dicek sekarang, bukan ditunda sampai rentang saat ini selesai. <button class="btn sm" style="margin-left:6px" data-act="pastcheck" data-b="${past.details[0].band.id}">Cek sekarang</button></div>` : "";
+  const nudge = (lc === null || ds >= 14)
+    ? `<div class="note info"><b>Waktunya cek berkala.</b> ${lc === null ? "Belum ada pengecekan." : "Pengecekan terakhir " + ds + " hari lalu."} Cukup 5 menit di tab Milestone. <button class="btn sm" style="margin-left:6px" data-act="tab" data-t="milestone">Buka checklist</button></div>` : "";
+  const legend = DOMAINS.map((d, i) => {
+    const p = st.per[i];
+    return `<div class="lg"><span class="dot" style="background:${d.c}"></span><b>${d.k}</b><span class="pct">${Math.round(p.pct * 100)}%</span><span class="d muted small">${d.d} · ${p.ans}/${p.total} terisi</span></div>`;
+  }).join("");
+  const anim = ui.anim; ui.anim = false;
+  return `<div class="stack">
+    <div><h1 class="title">${esc(c.name)}, ${ageLabel(m)}</h1><p class="muted">Rentang milestone: ${esc(band.label)}</p></div>
+    ${rangeNote ? `<div class="note info">${rangeNote}</div>` : ""}
+    ${pastNote}
+    ${nudge}
+    <div class="card grid2" style="align-items:center">
+      <div>${rings(st, anim)}</div>
+      <div class="legend">${legend}</div>
+    </div>
+    ${insight(st, band)}
+    <div class="card"><h2 class="h2">Tren kemajuan</h2>${trend(c, band)}</div>
+    <p class="foot">Checklist ini adaptasi umum dari tahapan perkembangan anak dan bukan alat diagnosis. Untuk skrining resmi, minta dokter anak memakai instrumen tervalidasi seperti Ages &amp; Stages Questionnaires (ASQ) atau Kuesioner Pra Skrining Perkembangan (KPSP).</p>
+    <div class="noprint">${ui.confirmDel
+      ? `<span class="small" style="margin-right:8px">Hapus semua data ${esc(c.name)}?</span><button class="btn sm danger" data-act="delyes">Ya, hapus</button> <button class="btn sm" data-act="delno">Batal</button>`
+      : `<button class="btn sm" data-act="delask">Hapus profil ${esc(c.name)}</button>`}</div>
+  </div>`;
+}
+ 
+function bandChips(c, band, mark) {
+  const cb = bandFor(ageM(c.dob)), m = ageM(c.dob);
+  return BANDS.map(b => {
+    const n = b.max <= m ? missedInBand(c, b) : 0;
+    return `<button class="chip" data-act="band" data-b="${b.id}" aria-pressed="${b.id === band.id}">${b.label}${mark && b.id === cb.id ? " (usia sekarang)" : ""}${n ? ` · ${n} terlewat` : ""}</button>`;
+  }).join("");
+}
+
+function viewMilestone(c) {
+  const band = curBand(c), st = stats(c, band);
+  const chips = bandChips(c, band, true);
+  const doms = DOMAINS.map((d, di) => {
+    const p = st.per[di];
+    const items = band.items[di].map((txt, ii) => {
+      const k = band.id + ":" + di + ":" + ii, m = c.marks[k];
+      const btns = STATUS.map((s, v) => `<button data-act="mark" data-k="${k}" data-v="${v}" aria-pressed="${!!m && m.v === v}">${s}</button>`).join("");
+      return `<div class="item"><div>${esc(txt)}${m ? `<div class="muted small">Dicatat ${fmtDate(m.d)}</div>` : ""}</div><div class="seg" role="group" aria-label="Status: ${esc(txt)}">${btns}</div></div>`;
+    }).join("");
+    return `<section class="card dom"><div class="dom-h"><span class="dot" style="background:${d.c}"></span><h2 class="h2" style="margin:0">${d.k}</h2></div>
+      <p class="muted small">${d.d}</p>
+      <div class="bar" role="img" aria-label="${Math.round(p.pct * 100)} persen"><i style="width:${Math.round(p.pct * 100)}%;background:${d.c}"></i></div>
+      <p class="small muted">${fmt(p.sum)} dari ${p.total} tercapai · ${p.ans}/${p.total} terisi</p>
+      ${items}</section>`;
+  }).join("");
+  return `<div class="stack">
+    <div><h1 class="title">Milestone ${esc(band.label)}</h1>
+    <p class="muted">Tandai <b>Sudah</b> bila terlihat konsisten, <b>Kadang</b> bila baru sesekali, <b>Belum</b> bila belum pernah terlihat. Tap lagi untuk menghapus pilihan.</p></div>
+    <div class="chips" role="group" aria-label="Pilih rentang usia">${chips}</div>
+    ${doms}
+  </div>`;
+}
+
+/* stimulasi */
+function statusMeta(v) {
+  if (v === 0) return { label: "Belum", color: "var(--no)" };
+  if (v === 1) return { label: "Kadang", color: "var(--some)" };
+  if (v === 2) return { label: "Sudah", color: "var(--yes)" };
+  return { label: "Belum dicek", color: "var(--muted)" };
+}
+function tipCard(x) {
+  const sm = statusMeta(x.v);
+  return `<article class="tip" style="border-left-color:${x.d.c}">
+    <div class="tip-h"><b>${x.d.k}</b><span class="stt" style="border-color:${sm.color}">${sm.label}</span></div>
+    <h3>${esc(x.tip[0])}</h3>
+    <p>${esc(x.tip[1])}</p>
+    <p class="muted small for">Untuk milestone: ${esc(x.txt)}</p>
+  </article>`;
+}
+function viewStimulasi(c) {
+  const band = curBand(c);
+  const chips = bandChips(c, band, true);
+  const list = [];
+  DOMAINS.forEach((d, di) => band.items[di].forEach((txt, ii) => {
+    const m = c.marks[band.id + ":" + di + ":" + ii];
+    list.push({ d, di, ii, txt, v: m ? m.v : null, tip: TIPS[band.id][di][ii] });
+  }));
+  const rank = v => v === 0 ? 0 : v === 1 ? 1 : 2;
+  const prio = list.filter(x => x.v !== 2).sort((a, b) => rank(a.v) - rank(b.v) || a.di - b.di || a.ii - b.ii);
+  const done = list.filter(x => x.v === 2);
+  const unchecked = list.filter(x => x.v === null).length;
+  const safety = ["b1", "b2", "b3"].includes(band.id)
+    ? `<div class="note warn">Dampingi anak selama bermain. Jauhkan benda kecil seperti kancing, baterai, atau balok kecil yang bisa tertelan dan menyebabkan tersedak.</div>` : "";
+  const prioHtml = prio.length
+    ? `<div class="tips">${prio.map(tipCard).join("")}</div>`
+    : `<div class="note ok">Semua milestone pada rentang ${esc(band.label)} sudah tercapai. Kamu bisa mengulang aktivitas di bawah untuk menguatkannya, atau pindah ke rentang usia berikutnya.</div>`;
+  const doneHtml = done.length
+    ? `<div><button class="btn sm" data-act="toggledone" aria-expanded="${ui.showDone}">${ui.showDone ? "Sembunyikan" : "Tampilkan"} ${done.length} milestone yang sudah tercapai</button></div>
+       ${ui.showDone ? `<div class="tips">${done.map(tipCard).join("")}</div>` : ""}` : "";
+  return `<div class="stack">
+    <div><h1 class="title">Saran stimulasi</h1>
+    <p class="muted">Aktivitas sederhana untuk membantu ${esc(c.name)} mencapai milestone ${esc(band.label)}. Yang belum tercapai muncul paling atas.</p></div>
+    <div class="chips" role="group" aria-label="Pilih rentang usia">${chips}</div>
+    ${unchecked ? `<div class="note info">${unchecked} milestone belum dicek, jadi urutan saran di bawah belum sepenuhnya menggambarkan kebutuhan ${esc(c.name)}. <button class="btn sm" style="margin-left:6px" data-act="tab" data-t="milestone">Isi checklist</button></div>` : ""}
+    ${safety}
+    <div class="card"><h2 class="h2">Prinsip dasarnya</h2><ul class="rules small">${RULES.map(r => `<li>${esc(r)}</li>`).join("")}</ul></div>
+    ${prioHtml}
+    ${doneHtml}
+    <p class="foot">Saran ini bersifat umum dan perlu disesuaikan dengan kondisi anak. Kalau ${esc(c.name)} tampak jauh tertinggal dari rentang usianya, atau kehilangan kemampuan yang sebelumnya sudah ada, konsultasikan dengan dokter anak.</p>
+  </div>`;
+}
+ 
+function statusOf(c, key) { const m = c.marks[key]; return m ? STATUS[m.v] : "Belum diisi"; }
+function summaryText(c, band) {
+  const st = stats(c, band), past = pastMissed(c);
+  let t = `Ringkasan perkembangan kognitif: ${c.name}\nUsia: ${ageLabel(ageM(c.dob))} (lahir ${fmtDate(c.dob)})\nRentang milestone: ${band.label}\nTanggal laporan: ${fmtDate(todayISO())}\nTercapai: ${Math.round(st.pct * 100)}% (${st.ans}/${st.total} item terisi)\n\n`;
+  DOMAINS.forEach((d, di) => {
+    t += `${d.k}: ${fmt(st.per[di].sum)} dari ${st.per[di].total} tercapai\n`;
+    band.items[di].forEach((x, ii) => { t += `  - [${statusOf(c, band.id + ":" + di + ":" + ii)}] ${x}\n`; });
+  });
+  if (past.total) {
+    t += `\nMilestone dari rentang usia sebelumnya yang sudah terlewat namun belum tercapai/diisi (${past.total} item):\n`;
+    past.details.forEach(x => {
+      t += `${x.band.label}:\n`;
+      DOMAINS.forEach((d, di) => x.band.items[di].forEach((txt, ii) => {
+        const mk = c.marks[x.band.id + ":" + di + ":" + ii];
+        if (!mk || mk.v !== 2) t += `  - [${mk ? STATUS[mk.v] : "Belum diisi"}] ${txt}\n`;
+      }));
+    });
+  }
+  t += "\nCatatan: laporan ini berasal dari observasi orang tua dan bukan hasil diagnosis atau tes terstandar.";
+  return t;
+}
+function viewLaporan(c) {
+  const band = curBand(c), st = stats(c, band), past = pastMissed(c);
+  const chips = bandChips(c, band, false);
+  const rows = DOMAINS.map((d, di) => `<tr><th colspan="2"><span class="dot" style="display:inline-block;vertical-align:-1px;margin-right:8px;background:${d.c}"></span>${d.k} <span class="muted small">· ${fmt(st.per[di].sum)}/${st.per[di].total} tercapai</span></th></tr>` +
+    band.items[di].map((x, ii) => `<tr><td>${esc(x)}</td><td class="st">${statusOf(c, band.id + ":" + di + ":" + ii)}</td></tr>`).join("")).join("");
+  const pastRows = past.details.map(x => {
+    const items = [];
+    DOMAINS.forEach((d, di) => x.band.items[di].forEach((txt, ii) => {
+      const mk = c.marks[x.band.id + ":" + di + ":" + ii];
+      if (!mk || mk.v !== 2) items.push(`<tr><td>${esc(txt)}</td><td class="st">${mk ? STATUS[mk.v] : "Belum diisi"}</td></tr>`);
+    }));
+    return `<tr><th colspan="2">${esc(x.band.label)} <span class="muted small">· rentang ini sudah terlewat</span></th></tr>${items.join("")}`;
+  }).join("");
+  const pastCard = past.total ? `<div class="card">
+      <h2 class="h2">Milestone rentang sebelumnya yang belum tercapai</h2>
+      <p class="muted small">Rentang usia ini sudah terlewat untuk ${esc(c.name)}, tapi ${past.total} item berikut belum tercapai atau belum sempat diisi.</p>
+      <table class="rt"><tbody>${pastRows}</tbody></table>
+    </div>` : "";
+  return `<div class="stack">
+    <div class="noprint"><h1 class="title">Laporan untuk tenaga profesional</h1><p class="muted">Cetak atau simpan sebagai PDF lewat dialog cetak peramban, atau salin sebagai teks untuk dikirim lewat pesan.</p></div>
+    <div class="chips noprint" role="group" aria-label="Pilih rentang usia">${chips}</div>
+    <div class="card">
+      <h2 style="font-size:1.5rem;margin-bottom:4px">${esc(c.name)}</h2>
+      <p class="muted">Usia ${ageLabel(ageM(c.dob))} · lahir ${fmtDate(c.dob)} · rentang ${esc(band.label)} · dibuat ${fmtDate(todayISO())}</p>
+      <p style="margin:12px 0 8px"><b>${Math.round(st.pct * 100)}%</b> milestone tercapai, ${st.ans} dari ${st.total} item terisi.</p>
+      <table class="rt"><tbody>${rows}</tbody></table>
+      <p class="foot">Laporan ini berasal dari observasi orang tua dan bukan hasil diagnosis atau tes terstandar.</p>
+    </div>
+    ${pastCard}
+    <div class="row noprint">
+      <button class="btn pri" data-act="print">Cetak / simpan PDF</button>
+      <button class="btn" data-act="copy">${ui.copied ? "Tersalin" : "Salin sebagai teks"}</button>
+    </div>
+    ${ui.showText ? `<div class="noprint"><label for="ta">Salin teks di bawah secara manual</label><textarea id="ta" readonly style="min-height:220px">${esc(summaryText(c, band))}</textarea></div>` : ""}
+  </div>`;
+}
+ 
+/* ---------- render ---------- */
+const app = document.getElementById("app");
+function render() {
+  const c = child();
+  let body;
+  if (!c || ui.adding) body = viewAdd();
+  else if (ui.tab === "milestone") body = tabs() + viewMilestone(c);
+  else if (ui.tab === "stimulasi") body = tabs() + viewStimulasi(c);
+  else if (ui.tab === "laporan") body = tabs() + viewLaporan(c);
+  else body = tabs() + viewRingkasan(c);
+  app.innerHTML = (c ? header() : "") + `<main>${body}</main>`;
+  if (ui.focus) { const el = app.querySelector(ui.focus); if (el) el.focus(); ui.focus = null; }
+}
+ 
+/* ---------- events ---------- */
+app.addEventListener("input", e => {
+  const t = e.target.dataset.in; if (!t) return;
+  const v = e.target.value;
+  if (t === "dname") ui.draft.name = v;
+  else if (t === "ddob") ui.draft.dob = v;
+});
+app.addEventListener("change", e => {
+  if (e.target.dataset.act === "switch") {
+    data.active = e.target.value; ui.band = null; ui.confirmDel = false; ui.showDone = false; ui.anim = true; save(); render();
+  }
+});
+app.addEventListener("click", e => {
+  const el = e.target.closest("[data-act]"); if (!el || el.tagName === "SELECT") return;
+  const act = el.dataset.act, c = child();
+  ui.err = "";
+  if (act === "tab") { ui.tab = el.dataset.t; ui.copied = false; ui.showText = false; ui.confirmDel = false; ui.anim = ui.tab === "ringkasan"; window.scrollTo(0, 0); }
+  else if (act === "band") { ui.band = el.dataset.b; ui.showDone = false; }
+  else if (act === "pastcheck") { ui.tab = "milestone"; ui.band = el.dataset.b; window.scrollTo(0, 0); }
+  else if (act === "toggledone") { ui.showDone = !ui.showDone; }
+  else if (act === "mark" && c) {
+    const k = el.dataset.k, v = Number(el.dataset.v), cur = c.marks[k];
+    if (cur && cur.v === v) delete c.marks[k]; else c.marks[k] = { v, d: todayISO() };
+    snapshot(c, k.split(":")[0]); save();
+    ui.focus = `[data-act="mark"][data-k="${k}"][data-v="${v}"]`;
+  }
+  else if (act === "showadd") { ui.adding = true; ui.draft = { name: "", dob: "" }; }
+  else if (act === "canceladd") { ui.adding = false; }
+  else if (act === "addchild") {
+    const name = ui.draft.name.trim(), dob = ui.draft.dob;
+    if (!name) ui.err = "Isi nama panggilan anak.";
+    else if (!dob || isNaN(new Date(dob))) ui.err = "Isi tanggal lahir.";
+    else if (dob > todayISO()) ui.err = "Tanggal lahir tidak boleh di masa depan.";
+    else if (ageM(dob) > 12 * 10) ui.err = "Checklist ini untuk anak sampai usia sekitar 6 tahun. Periksa kembali tanggal lahirnya.";
+    else {
+      const id = "c" + Date.now();
+      data.children.push({ id, name, dob, marks: {}, history: [] });
+      data.active = id; ui.adding = false; ui.band = null; ui.tab = "ringkasan"; ui.anim = true; save();
+    }
+  }
+  else if (act === "print") { try { window.print(); } catch (x) { ui.showText = true; } }
+  else if (act === "copy" && c) {
+    const txt = summaryText(c, curBand(c));
+    try {
+      navigator.clipboard.writeText(txt).then(() => { ui.copied = true; render(); }, () => { ui.showText = true; render(); });
+    } catch (x) { ui.showText = true; }
+    return render();
+  }
+  else if (act === "delask") { ui.confirmDel = true; }
+  else if (act === "delno") { ui.confirmDel = false; }
+  else if (act === "delyes" && c) {
+    data.children = data.children.filter(x => x.id !== c.id);
+    data.active = data.children.length ? data.children[0].id : null;
+    ui.confirmDel = false; ui.band = null; ui.anim = true; save();
+  }
+  render();
+});
+render();
+</script>
+</body>
+</html>
