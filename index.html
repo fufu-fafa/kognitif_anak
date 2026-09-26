@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
 <meta charset="utf-8">
-<title>Jejak Tumbuh: pemantau perkembangan kognitif anak</title>
+<title>CogniTrack: pemantau perkembangan kognitif anak</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -149,7 +149,7 @@ textarea{min-height:96px;resize:vertical}
 <script>
 "use strict";
 /* ---------- data ---------- */
-const KEY = "jejaktumbuh:v1";
+const KEY = "cognitrack:v1";
 const DOMAINS = [
   { k: "Attention", c: "var(--d0)", d: "Fokus dan berbagi perhatian" },
   { k: "Working memory", c: "var(--d1)", d: "Menyimpan dan memakai informasi sesaat" },
@@ -355,7 +355,7 @@ function header() {
   return `<header class="top noprint">
     <div class="brand">
       <svg viewBox="0 0 34 34" aria-hidden="true"><circle cx="17" cy="17" r="15" fill="none" stroke="var(--d0)" stroke-width="3"/><circle cx="17" cy="17" r="9.5" fill="none" stroke="var(--d1)" stroke-width="3" stroke-dasharray="40 100" stroke-linecap="round"/><circle cx="17" cy="17" r="4" fill="var(--d2)"/></svg>
-      <b>Jejak Tumbuh</b>
+      <b>CogniTrack</b>
     </div>
     ${data.children.length > 1 ? `<select class="sel" data-act="switch" aria-label="Pilih anak">${opts}</select>` : ""}
     ${c ? `<button class="btn sm" data-act="showadd">Tambah anak</button>` : ""}
