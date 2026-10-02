@@ -1,0 +1,879 @@
+"use strict";
+/* ---------- konstanta ---------- */
+const KEY = "cognitrack:v2", OLD_KEY = "cognitrack:v1";
+const DOMS = {
+  GK: { k: "Gerak kasar", c: "var(--d0)" },
+  GH: { k: "Gerak halus", c: "var(--d1)" },
+  BB: { k: "Bicara dan bahasa", c: "var(--d2)" },
+  SK: { k: "Sosialisasi dan kemandirian", c: "var(--d3)" }
+};
+const DOM_ORDER = ["GK", "GH", "BB", "SK"];
+const ROLES = { ortu: "Orang tua", guru: "Guru PAUD", dokter: "Dokter" };
+const TABS = {
+  ortu: [["beranda", "Beranda"], ["skrining", "Skrining"], ["stimulasi", "Stimulasi"], ["riwayat", "Riwayat"]],
+  guru: [["beranda", "Beranda"], ["skrining", "Skrining"], ["stimulasi", "Stimulasi"], ["riwayat", "Riwayat"]],
+  dokter: [["antrean", "Dasbor"], ["selesai", "Sudah diverifikasi"], ["indikator", "Indikator"]]
+};
+const CATS = {
+  S: { k: "Sesuai", cls: "ok" },
+  M: { k: "Meragukan", cls: "warn" },
+  P: { k: "Kemungkinan penyimpangan", cls: "bad" }
+};
+const FS = [0.9, 1, 1.15, 1.3];
+const RULE_ANSWER = "Jawab Ya bila anak bisa, pernah, sering, atau kadang-kadang melakukannya. Jawab Tidak bila anak belum pernah atau tidak pernah melakukannya, atau Anda tidak tahu.";
+
+/* Petunjuk pengamatan dan perekaman per domain (adaptasi CogniTrack, menunggu telaah ahli). */
+const GUIDE = {
+  GK: { amati: "Siapkan tempat yang lapang dan aman. Pancing anak melakukannya, misalnya dengan mainan, dan beri kesempatan sampai 3 kali.",
+        rekam: "Rekam seluruh tubuh anak dari samping atau depan selama 10–30 detik, dengan cahaya yang cukup." },
+  GH: { amati: "Dudukkan anak di depan meja atau alas datar. Boleh dicontohkan dulu, lalu biarkan anak mencoba sendiri.",
+        rekam: "Rekam dari dekat supaya tangan anak dan bendanya terlihat jelas." },
+  BB: { amati: "Pilih waktu anak tenang, tidak lapar, dan tidak mengantuk. Jangan membisikkan atau menuntun jawabannya.",
+        rekam: "Rekam wajah anak di ruangan yang tenang supaya suaranya terdengar jelas." },
+  SK: { amati: "Jawab berdasarkan kebiasaan anak sehari-hari, bukan kejadian sekali kebetulan.",
+        rekam: "Rekam saat kegiatan itu terjadi dalam rutinitas, misalnya saat makan atau berpakaian." }
+};
+
+/* ---------- penyimpanan data ---------- */
+function newCode() {
+  const A = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let s = ""; for (let i = 0; i < 4; i++) s += A[Math.floor(Math.random() * A.length)];
+  return "CT-" + s;
+}
+function load() {
+  try { const r = localStorage.getItem(KEY); if (r) return JSON.parse(r); } catch (e) {}
+  try {
+    const o = JSON.parse(localStorage.getItem(OLD_KEY) || "null");
+    if (o && o.children && o.children.length) {
+      return { v: 2, role: "ortu", fs: 1, doctorName: "", active: o.active,
+        children: o.children.map(c => ({ id: c.id, code: newCode(), name: c.name, dob: c.dob, prem: false, consent: null, legacy: true, sessions: [] })) };
+    }
+  } catch (e) {}
+  return null;
+}
+const data = load() || { v: 2, role: "ortu", fs: 1, doctorName: "", active: null, children: [] };
+function save() { try { localStorage.setItem(KEY, JSON.stringify(data)); } catch (e) {} }
+
+const ui = { tab: null, adding: false, draft: null, err: "", confirm: null, editConsent: false,
+  report: null, vd: null, vview: null, copied: false, showText: false };
+
+/* ---------- helper ---------- */
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const pad = n => String(n).padStart(2, "0");
+const isoOf = t => t.getFullYear() + "-" + pad(t.getMonth() + 1) + "-" + pad(t.getDate());
+const todayISO = () => isoOf(new Date());
+const D = iso => new Date(iso + "T00:00:00");
+function fmtDate(iso) { try { return D(iso).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" }); } catch (e) { return iso; } }
+function fmtTime(ms) { return new Date(ms).toLocaleString("id-ID", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }); }
+function fmtDur(ms) {
+  const m = Math.round(ms / 60000);
+  if (m < 60) return m + " menit";
+  if (m < 48 * 60) return Math.floor(m / 60) + " jam" + (m % 60 ? " " + (m % 60) + " menit" : "");
+  return Math.round(m / 1440) + " hari";
+}
+const pct = (a, b) => b ? Math.round((a / b) * 100) + "%" : "–";
+const dec = (x, n = 2) => x.toFixed(n).replace(".", ",");
+function median(a) { if (!a.length) return null; const s = [...a].sort((x, y) => x - y), h = s.length >> 1; return s.length % 2 ? s[h] : (s[h - 1] + s[h]) / 2; }
+
+/* Hitung umur menurut pedoman SDIDTK: sisa hari > 16 dibulatkan menjadi 1 bulan. */
+function ageParts(dob, at) {
+  const b = D(dob), n = D(at);
+  let y = n.getFullYear() - b.getFullYear(), m = n.getMonth() - b.getMonth(), d = n.getDate() - b.getDate();
+  if (d < 0) { m--; d += new Date(n.getFullYear(), n.getMonth(), 0).getDate(); }
+  if (m < 0) { y--; m += 12; }
+  const months = y * 12 + m;
+  return { y, m, d, months, rounded: months + (d > 16 ? 1 : 0) };
+}
+/* Bila umur tidak tepat pada kelompok umur KPSP, pakai formulir kelompok umur yang lebih muda. */
+function formFor(rounded) {
+  if (rounded < 3 || rounded > 72) return null;
+  return FORM_AGES.filter(f => f <= rounded).pop();
+}
+function ageText(a) { return (a.y ? a.y + " tahun " : "") + a.m + " bulan " + a.d + " hari"; }
+function stimGroup(form) { return STIMULASI.filter(g => g.min <= form).pop() || STIMULASI[0]; }
+
+const yesCount = arr => arr.filter(x => x === true).length;
+/* Ambang pedoman: Ya 9–10 sesuai, 7–8 meragukan, 6 atau kurang kemungkinan penyimpangan. */
+const category = yes => yes >= 9 ? "S" : yes >= 7 ? "M" : "P";
+const corrections = s => s.verify ? s.verify.final.filter((v, i) => v !== s.answers[i]).length : 0;
+
+function visibleKids() {
+  return data.children.filter(c => data.role === "ortu" || (c.consent && c.consent.guru));
+}
+function child() {
+  const kids = visibleKids();
+  return kids.find(c => c.id === data.active) || kids[0] || null;
+}
+const draftOf = c => c.sessions.find(s => s.status === "draft");
+const pendingOf = c => c.sessions.find(s => s.status === "menunggu");
+const lastVerified = c => [...c.sessions].reverse().find(s => s.status === "terverifikasi");
+function allSessions() {
+  const out = [];
+  data.children.forEach(c => c.sessions.forEach(s => out.push({ c, s })));
+  return out;
+}
+function findSession(sid) { for (const x of allSessions()) if (x.s.id === sid) return x; return null; }
+
+function advice(s) {
+  const cat = category(yesCount(s.verify.final));
+  const next = FORM_AGES.find(f => f > s.form);
+  if (cat === "S") return [
+    "Perkembangan anak sesuai dengan umurnya.",
+    "Beri pujian kepada anak dan lanjutkan stimulasi sesuai umur setiap hari.",
+    next ? `Lakukan skrining lagi saat anak berumur ${next} bulan.` : "Formulir KPSP berakhir pada umur 72 bulan.",
+    "Tetap ikuti pemantauan rutin di Posyandu atau Puskesmas."
+  ];
+  if (cat === "M") return [
+    "Ada beberapa kemampuan yang belum terlihat. Ini belum tentu berarti ada gangguan.",
+    "Lakukan stimulasi lebih sering, terutama pada bidang yang tampil paling atas di menu Stimulasi.",
+    "Ulangi skrining 2 minggu lagi dengan formulir yang sama.",
+    "Bila hasilnya tetap meragukan, periksakan anak ke dokter atau Puskesmas."
+  ];
+  return [
+    "Hasil skrining menunjukkan kemungkinan keterlambatan pada beberapa kemampuan.",
+    "Segera periksakan anak ke dokter, Puskesmas, atau klinik tumbuh kembang untuk pemeriksaan langsung.",
+    "Bawa laporan ringkas dari menu Riwayat saat berkonsultasi.",
+    "Sambil menunggu, tetap lakukan stimulasi dari menu Stimulasi setiap hari."
+  ];
+}
+const NOT_DIAGNOSIS = "Hasil ini adalah skrining, bukan diagnosis. Hasil “sesuai” tidak menggantikan pemantauan rutin di fasilitas kesehatan, dan hasil “meragukan” atau “kemungkinan penyimpangan” perlu ditindaklanjuti dengan pemeriksaan langsung oleh tenaga kesehatan.";
+const draftBanner = () => KPSP_DRAFT ? `<div class="note warn small"><b>Prototype.</b> Teks butir KPSP di aplikasi ini masih draf dan harus diganti dengan teks resmi Buku Bagan SDIDTK (Kemenkes RI, 2022) sebelum uji ahli.</div>` : "";
+
+/* ---------- tampilan umum ---------- */
+function header() {
+  const r = data.role, kids = visibleKids(), c = child();
+  const kidSel = r !== "dokter" && kids.length > 1
+    ? `<select class="sel" data-act="switch" aria-label="Pilih anak">${kids.map(x => `<option value="${x.id}" ${c && x.id === c.id ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select>` : "";
+  const add = r === "ortu" && kids.length && !ui.adding ? `<button class="btn sm" data-act="showadd">Tambah anak</button>` : "";
+  return `<header class="top noprint">
+    <div class="brand">
+      <svg viewBox="0 0 34 34" aria-hidden="true"><circle cx="17" cy="17" r="15" fill="none" stroke="var(--d0)" stroke-width="3"/><circle cx="17" cy="17" r="9.5" fill="none" stroke="var(--d1)" stroke-width="3" stroke-dasharray="40 100" stroke-linecap="round"/><circle cx="17" cy="17" r="4" fill="var(--d2)"/></svg>
+      <b>CogniTrack</b>
+    </div>
+    ${kidSel}${add}
+    <div class="fs" role="group" aria-label="Ukuran teks"><button class="btn sm" data-act="fs" data-d="-1" aria-label="Perkecil teks">A−</button><button class="btn sm" data-act="fs" data-d="1" aria-label="Perbesar teks">A+</button></div>
+    <select class="sel" data-act="role" aria-label="Masuk sebagai">${Object.entries(ROLES).map(([k, v]) => `<option value="${k}" ${k === r ? "selected" : ""}>${v}</option>`).join("")}</select>
+  </header>`;
+}
+function tabs() {
+  return `<nav class="tabs noprint" aria-label="Menu utama">${TABS[data.role].map(t => `<button data-act="tab" data-t="${t[0]}" ${ui.tab === t[0] ? 'aria-current="page"' : ""}>${t[1]}</button>`).join("")}</nav>`;
+}
+function domTag(d) { return `<span class="tag" style="--c:${DOMS[d].c}"><i></i>${DOMS[d].k}</span>`; }
+
+/* ---------- profil dan persetujuan ---------- */
+function blankDraft() { return { name: "", dob: "", prem: false, wali: "", rel: "Ibu", cData: false, cVideo: false, cGuru: false }; }
+function consentFields(d) {
+  const rels = ["Ibu", "Ayah", "Wali"];
+  return `<h2 class="h3">Persetujuan orang tua atau wali</h2>
+    <div class="note info small"><ul class="list">
+      <li>Data yang dikumpulkan hanya nama panggilan, tanggal lahir, jawaban skrining, dan video bila Anda setujui.</li>
+      <li>Dokter hanya melihat kode anak, bukan namanya. Aplikasi tidak memuat iklan.</li>
+      <li>Video hanya dapat dibuka dokter pemverifikasi dan dihapus setelah periode penelitian berakhir. Pada prototipe ini, video belum benar-benar direkam atau diunggah.</li>
+      <li>Anda dapat mengubah persetujuan atau menghapus semua data anak kapan saja.</li>
+    </ul></div>
+    <div class="field"><label for="wali">Nama orang tua atau wali</label><input id="wali" type="text" maxlength="60" value="${esc(d.wali)}" data-in="wali" autocomplete="off"></div>
+    <div class="field"><label for="rel">Hubungan dengan anak</label><select id="rel" class="f" data-in="rel">${rels.map(x => `<option ${x === d.rel ? "selected" : ""}>${x}</option>`).join("")}</select></div>
+    <label class="chk"><input type="checkbox" data-in="cData" ${d.cData ? "checked" : ""}><span><b>Wajib.</b> Saya orang tua atau wali anak ini dan menyetujui data anak disimpan dan diolah untuk skrining perkembangan.</span></label>
+    <label class="chk"><input type="checkbox" data-in="cVideo" ${d.cVideo ? "checked" : ""}><span><b>Opsional.</b> Saya menyetujui perekaman video anak dan peninjauan video oleh dokter pemverifikasi. Tanpa video, dokter menelaah dari jawaban Anda.</span></label>
+    <label class="chk"><input type="checkbox" data-in="cGuru" ${d.cGuru ? "checked" : ""}><span><b>Opsional.</b> Saya mengizinkan guru PAUD anak saya mengisi checklist KPSP untuk anak ini.</span></label>`;
+}
+function consentErr(d) {
+  if (!d.wali.trim()) return "Isi nama orang tua atau wali.";
+  if (!d.cData) return "Persetujuan pengolahan data wajib dicentang untuk memakai CogniTrack.";
+  return "";
+}
+function consentOf(d) { return { wali: d.wali.trim(), rel: d.rel, at: todayISO(), data: true, video: d.cVideo, guru: d.cGuru }; }
+
+function viewAdd() {
+  const first = data.children.length === 0, d = ui.draft;
+  return `<section class="card narrow">
+    <h1 class="title">${first ? "Selamat datang di CogniTrack" : "Tambah anak"}</h1>
+    <p class="muted" style="margin-bottom:14px">Skrining perkembangan anak umur 3–72 bulan dengan KPSP sesuai pedoman SDIDTK, diverifikasi dokter, lalu stimulasi yang disesuaikan dengan hasilnya. Satu akun dapat menyimpan lebih dari satu anak.</p>
+    ${ui.err ? `<p class="err" role="alert">${esc(ui.err)}</p>` : ""}
+    <h2 class="h3">Data anak</h2>
+    <div class="field"><label for="nm">Nama panggilan</label><input id="nm" type="text" maxlength="40" value="${esc(d.name)}" data-in="name" autocomplete="off"><p class="small muted">Hanya tampil di perangkat Anda. Dokter melihat kode anak.</p></div>
+    <div class="field"><label for="dob">Tanggal lahir</label><input id="dob" type="date" max="${todayISO()}" value="${esc(d.dob)}" data-in="dob"></div>
+    <label class="chk"><input type="checkbox" data-in="prem" ${d.prem ? "checked" : ""}><span>Anak lahir prematur (sebelum 37 minggu)</span></label>
+    ${consentFields(d)}
+    <div class="row">
+      <button class="btn pri" data-act="addchild">Simpan profil</button>
+      ${first ? "" : `<button class="btn" data-act="canceladd">Batal</button>`}
+    </div>
+    ${first ? `<p class="small muted" style="margin-top:16px">Ingin melihat alurnya dulu? <button class="linkbtn" data-act="demo">Isi data contoh (dummy)</button></p>` : ""}
+  </section>`;
+}
+function viewConsent(c) {
+  const d = ui.draft;
+  return `<section class="card narrow">
+    <h1 class="title">${c.consent ? "Ubah persetujuan" : "Lengkapi persetujuan"}</h1>
+    <p class="muted" style="margin-bottom:14px">${c.legacy && !c.consent ? `Profil ${esc(c.name)} berasal dari versi sebelumnya. CogniTrack kini memakai KPSP, jadi checklist lama tidak dipakai lagi. ` : ""}Persetujuan diperlukan sebelum skrining.</p>
+    ${ui.err ? `<p class="err" role="alert">${esc(ui.err)}</p>` : ""}
+    ${consentFields(d)}
+    <div class="row"><button class="btn pri" data-act="saveconsent">Simpan persetujuan</button>${c.consent ? `<button class="btn" data-act="cancelconsent">Batal</button>` : ""}</div>
+  </section>`;
+}
+
+/* ---------- beranda ---------- */
+function ageCard(c) {
+  const a = ageParts(c.dob, todayISO()), f = formFor(a.rounded);
+  let form;
+  if (a.rounded < 3) form = "Belum ada. KPSP dimulai pada umur 3 bulan.";
+  else if (a.rounded > 72) form = "Di luar cakupan. CogniTrack Tahap 1 untuk umur 3–72 bulan.";
+  else form = `KPSP ${f} bulan${f !== a.rounded ? " (umur tidak tepat pada kelompok formulir, jadi dipakai formulir kelompok umur yang lebih muda)" : ""}`;
+  return `<div class="card"><h2 class="h2">Hitung umur otomatis</h2>
+    <dl class="kv">
+      <dt>Umur hari ini</dt><dd>${ageText(a)}</dd>
+      <dt>Umur dalam bulan</dt><dd><b>${a.rounded} bulan</b> ${a.d > 16 ? `(sisa ${a.d} hari dibulatkan ke atas)` : a.d ? `(sisa ${a.d} hari tidak dibulatkan)` : ""}</dd>
+      <dt>Formulir</dt><dd>${form}</dd>
+    </dl>
+    <p class="small muted" style="margin-top:10px">Aturan pedoman SDIDTK: sisa umur lebih dari 16 hari dibulatkan menjadi 1 bulan. Bila umur tidak sama dengan kelompok umur KPSP, dipakai formulir kelompok umur yang lebih muda.</p>
+  </div>`;
+}
+function premNote(c) {
+  return c.prem ? `<div class="note warn small">Koreksi umur untuk anak prematur belum didukung prototype ini. Umur di aplikasi dihitung dari tanggal lahir. Konsultasikan dengan tenaga kesehatan mengenai umur yang sebaiknya dipakai.</div>` : "";
+}
+function resultBlock(s, withBtns) {
+  const y = yesCount(s.verify.final), cat = CATS[category(y)], corr = corrections(s);
+  return `<section class="card result ${cat.cls}">
+    <p class="small muted">KPSP ${s.form} bulan · diisi ${fmtDate(s.at)} · diverifikasi ${fmtTime(s.verify.at)}</p>
+    <h2 class="cat">${cat.k}</h2>
+    <p>${y} dari ${s.verify.final.length} jawaban “Ya” setelah verifikasi dokter.${corr ? ` Dokter mengoreksi ${corr} jawaban.` : ""}</p>
+    <ul class="list" style="margin-top:10px">${advice(s).map(x => `<li>${esc(x)}</li>`).join("")}</ul>
+    ${s.verify.note ? `<p class="small" style="margin-top:10px"><b>Catatan dokter:</b> ${esc(s.verify.note)}</p>` : ""}
+    <p class="note info small" style="margin-top:12px">${NOT_DIAGNOSIS}</p>
+    ${withBtns ? `<div class="row"><button class="btn pri sm" data-act="tab" data-t="stimulasi">Lihat stimulasi</button><button class="btn sm" data-act="report" data-s="${s.id}">Laporan ringkas</button></div>` : ""}
+  </section>`;
+}
+function pendingBlock(s) {
+  return `<section class="card result wait">
+    <p class="small muted">KPSP ${s.form} bulan · dikirim ${fmtTime(s.submittedAt)}</p>
+    <h2 class="cat">Menunggu verifikasi</h2>
+    <p>Dokter sedang meninjau ${hasVideo(s) ? "video dan " : ""}jawaban checklist. Kategori hasil akan tampil setelah dokter menetapkan jawaban akhir.</p>
+    <div class="row"><button class="btn sm" data-act="tab" data-t="stimulasi">Lihat stimulasi umum sesuai umur</button></div>
+  </section>`;
+}
+function viewBeranda(c) {
+  const a = ageParts(c.dob, todayISO()), dr = draftOf(c), pe = pendingOf(c), lv = lastVerified(c), isOrtu = data.role === "ortu";
+  let status;
+  if (dr) status = `<div class="note info"><b>Skrining KPSP ${dr.form} bulan belum selesai</b> (${yesCount(dr.answers.map(x => x !== null))}/${dr.answers.length} butir dijawab). <button class="btn sm" style="margin-left:6px" data-act="tab" data-t="skrining">Lanjutkan</button></div>`;
+  else if (!pe && !lv) status = `<div class="note info"><b>Belum ada skrining.</b> <button class="btn sm pri" style="margin-left:6px" data-act="tab" data-t="skrining">Mulai skrining</button></div>`;
+  else status = "";
+  const cs = c.consent;
+  return `<div class="stack">
+    <div><h1 class="title">${esc(c.name)}</h1><p class="muted">Kode ${esc(c.code)} · ${ageText(a)} (${a.rounded} bulan) · lahir ${fmtDate(c.dob)}</p></div>
+    ${premNote(c)}
+    ${status}
+    ${pe ? pendingBlock(pe) : ""}
+    ${lv ? (pe ? `<h2 class="h2" style="margin:6px 0 -6px">Hasil terverifikasi sebelumnya</h2>` : "") + resultBlock(lv, true) : ""}
+    ${isOrtu ? `<section class="card"><h2 class="h2">Profil dan persetujuan</h2>
+      <dl class="kv">
+        <dt>Orang tua/wali</dt><dd>${esc(cs.wali)} (${esc(cs.rel)}) · disetujui ${fmtDate(cs.at)}</dd>
+        <dt>Perekaman video</dt><dd>${cs.video ? "Disetujui" : "Tidak disetujui"}</dd>
+        <dt>Pengisian oleh guru</dt><dd>${cs.guru ? "Diizinkan" : "Tidak diizinkan"}</dd>
+      </dl>
+      <div class="row">
+        <button class="btn sm" data-act="editconsent">Ubah persetujuan</button>
+        ${ui.confirm === "delchild"
+          ? `<span class="small">Hapus semua data dan video ${esc(c.name)}?</span><button class="btn sm danger" data-act="delyes">Ya, hapus</button><button class="btn sm" data-act="nope">Batal</button>`
+          : `<button class="btn sm danger" data-act="delask">Hapus data anak</button>`}
+      </div></section>` : ""}
+    <p class="foot">CogniTrack adalah alat skrining dan edukasi, bukan alat diagnosis, dan tidak menggantikan Buku KIA maupun pemantauan di Posyandu atau Puskesmas.</p>
+  </div>`;
+}
+
+/* ---------- skrining ---------- */
+function itemGuide(it) {
+  const g = GUIDE[it[0]], noRec = it[3].includes("n");
+  return `<details class="guide"><summary>Petunjuk pengamatan</summary><dl class="kv small">
+    <dt>Alat dan bahan</dt><dd>${it[4] ? esc(it[4]) : "Tidak perlu alat khusus."}</dd>
+    <dt>Cara mengamati</dt><dd>${esc(g.amati)}</dd>
+    <dt>Cara merekam</dt><dd>${noRec ? "Tidak perlu direkam. Dokter menelaah berdasarkan jawaban Anda dan dapat mengonfirmasinya saat kunjungan." : esc(g.rekam)}</dd>
+  </dl></details>`;
+}
+function itemHead(it, i) {
+  return `<div class="item-h"><span class="num">${i + 1}</span>${domTag(it[0])}${it[3].includes("k") ? `<span class="tag ghost">terkait kognitif</span>` : ""}${it[3].includes("n") ? `<span class="tag ghost">kebiasaan, tidak direkam</span>` : ""}</div>`;
+}
+function viewSkrining(c) {
+  const pe = pendingOf(c), dr = draftOf(c);
+  if (pe) return `<div class="stack"><h1 class="title">Skrining</h1>${pendingBlock(pe)}<p class="muted">Skrining baru dapat dimulai setelah skrining ini diverifikasi.</p></div>`;
+  if (!dr) {
+    const a = ageParts(c.dob, todayISO()), f = formFor(a.rounded);
+    return `<div class="stack">
+      <div><h1 class="title">Skrining KPSP</h1><p class="muted">Kuesioner Pra Skrining Perkembangan untuk ${esc(c.name)}, empat bidang: gerak kasar, gerak halus, bicara dan bahasa, serta sosialisasi dan kemandirian.</p></div>
+      ${premNote(c)}
+      ${ageCard(c)}
+      ${f ? `<div class="row"><button class="btn pri" data-act="start">Mulai skrining KPSP ${f} bulan</button></div>
+        <p class="small muted">Siapkan sekitar 15 menit saat anak sehat dan tidak mengantuk. Setelah checklist selesai, ${c.consent.video ? "Anda akan melihat panduan merekam video untuk ditinjau dokter" : "jawaban dikirim ke dokter untuk ditinjau"}.</p>` : ""}
+    </div>`;
+  }
+  const items = KPSP[dr.form];
+  if (dr.step === "video") return viewVideo(c, dr, items);
+  const answered = dr.answers.filter(x => x !== null).length, all = answered === items.length;
+  const list = items.map((it, i) => `<article class="card item">
+      ${itemHead(it, i)}
+      <p class="q">${esc(it[1])}</p>
+      ${itemGuide(it)}
+      <div class="seg" role="group" aria-label="Jawaban butir ${i + 1}">
+        <button data-act="ans" data-i="${i}" data-v="y" aria-pressed="${dr.answers[i] === true}">Ya</button><button data-act="ans" data-i="${i}" data-v="n" aria-pressed="${dr.answers[i] === false}">Tidak</button>
+      </div>
+    </article>`).join("");
+  return `<div class="stack">
+    <div><h1 class="title">KPSP ${dr.form} bulan</h1>
+    <p class="muted">${esc(c.name)} · umur ${ageText(dr.age)} (${dr.age.rounded} bulan) · diisi oleh ${ROLES[dr.by]} · ${answered}/${items.length} dijawab</p></div>
+    ${draftBanner()}
+    <div class="note info small">${RULE_ANSWER} Buka “Petunjuk pengamatan” pada setiap butir untuk alat, cara mengamati, dan cara merekam.</div>
+    ${list}
+    <div class="row">
+      <button class="btn pri" data-act="tovideo" ${all ? "" : "disabled"}>${c.consent.video ? "Lanjut ke unggah video" : "Lanjut ke pengiriman"}</button>
+      ${ui.confirm === "canceldraft"
+        ? `<span class="small">Buang jawaban skrining ini?</span><button class="btn sm danger" data-act="canceldraftyes">Ya, batalkan</button><button class="btn sm" data-act="nope">Tidak</button>`
+        : `<button class="btn" data-act="canceldraft">Batalkan skrining</button>`}
+    </div>
+    ${all ? "" : `<p class="small muted">Jawab semua ${items.length} butir untuk melanjutkan.</p>`}
+  </div>`;
+}
+function viewVideo(c, dr, items) {
+  const rec = items.map((it, i) => ({ it, i })).filter(x => !x.it[3].includes("n"));
+  const habit = items.map((it, i) => ({ it, i })).filter(x => x.it[3].includes("n"));
+  const li = x => `<li><b>${x.i + 1}.</b> ${esc(x.it[1])}</li>`;
+  const body = c.consent.video ? `
+    <p class="muted">Rekam ${esc(c.name)} saat melakukan tugas pada butir yang dapat diperagakan. Video hanya dapat dibuka oleh dokter pemverifikasi.</p>
+    <div class="card"><h2 class="h2">Butir yang sebaiknya direkam</h2><ol class="list plain">${rec.map(li).join("")}</ol>
+      ${habit.length ? `<h3 class="h3">Tidak perlu direkam</h3><p class="small muted" style="margin-bottom:6px">Kebiasaan sehari-hari ini ditelaah dokter dari jawaban Anda dan dapat dikonfirmasi saat kunjungan.</p><ol class="list plain">${habit.map(li).join("")}</ol>` : ""}</div>
+    <div class="note info small"><ul class="list">
+      <li>Video pendek 10–60 detik per tugas. Satu video boleh berisi beberapa tugas.</li>
+      <li>Sebutkan nomor butir di awal rekaman, misalnya “butir 3”.</li>
+      <li>Pastikan cahaya cukup, anak terlihat jelas, dan hindari merekam orang lain yang tidak perlu.</li>
+    </ul></div>
+    <div class="card dropzone" aria-disabled="true">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="6" width="13" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M15.5 10.5 21 7.5v9l-5.5-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+      <h2 class="h2">Unggah video</h2>
+      <p class="note warn small"><b>Ini hanyalah prototipe.</b> Fitur rekam dan unggah video belum tersedia, jadi tidak ada video yang direkam atau dikirim. Pada aplikasi yang sebenarnya, video diunggah di sini lalu diteruskan ke dokter pemverifikasi. Untuk demonstrasi, dasbor dokter menampilkan contoh tampilan video.</p>
+      <button class="btn" disabled>Rekam atau pilih video</button>
+    </div>`
+    : `<div class="note info">Anda tidak menyetujui perekaman video. Dokter akan menelaah berdasarkan jawaban checklist, dan dapat mengonfirmasi saat kunjungan. Persetujuan dapat diubah di Beranda.</div>`;
+  return `<div class="stack">
+    <div><h1 class="title">${c.consent.video ? "Unggah video" : "Kirim untuk verifikasi"}</h1><p class="muted small">KPSP ${dr.form} bulan · checklist selesai diisi</p></div>
+    ${body}
+    <div class="row">
+      <button class="btn" data-act="toisi">Kembali ke checklist</button>
+      <button class="btn pri" data-act="submit">Kirim ke dokter untuk verifikasi</button>
+    </div>
+  </div>`;
+}
+
+/* ---------- stimulasi ---------- */
+function stimPlan(c) {
+  const subm = c.sessions.filter(s => s.status !== "draft"), last = subm[subm.length - 1];
+  if (last && last.status === "terverifikasi") {
+    const items = KPSP[last.form], counts = {}, linked = {};
+    DOM_ORDER.forEach(d => { counts[d] = 0; linked[d] = {}; });
+    items.forEach((it, i) => {
+      if (last.verify.final[i] === false) { counts[it[0]]++; (linked[it[0]][it[2]] = linked[it[0]][it[2]] || []).push(i); }
+    });
+    /* Domain dengan butir "Tidak" terbanyak lebih dahulu; bila sama, ikuti urutan pedoman. */
+    const order = DOM_ORDER.slice().sort((a, b) => counts[b] - counts[a] || DOM_ORDER.indexOf(a) - DOM_ORDER.indexOf(b));
+    const g = stimGroup(last.form);
+    const secs = order.map(d => {
+      const acts = g[d].map((a, ai) => ({ a, ai, items: linked[d][ai] || [] }));
+      /* Di dalam domain: aktivitas yang terkait langsung dengan butir "Tidak" lebih dahulu. */
+      acts.sort((x, y) => (y.items.length ? 1 : 0) - (x.items.length ? 1 : 0) || (x.items[0] ?? 99) - (y.items[0] ?? 99) || x.ai - y.ai);
+      return { d, n: counts[d], acts };
+    });
+    return { mode: "personal", s: last, g, secs, items, noTidak: order.every(d => !counts[d]) };
+  }
+  let form = last ? last.form : formFor(ageParts(c.dob, todayISO()).rounded);
+  if (!form) form = ageParts(c.dob, todayISO()).rounded < 3 ? 3 : 72;
+  const g = stimGroup(form);
+  return { mode: last ? "pending" : "none", g, secs: DOM_ORDER.map(d => ({ d, n: null, acts: g[d].map((a, ai) => ({ a, ai, items: [] })) })) };
+}
+function viewStimulasi(c) {
+  const p = stimPlan(c);
+  let intro, notes = "";
+  if (p.mode === "personal") {
+    const cat = category(yesCount(p.s.verify.final));
+    intro = `Aktivitas untuk umur ${p.g.label}, diurutkan mulai dari bidang dengan jawaban “Tidak” terbanyak pada skrining terverifikasi ${fmtDate(p.s.at)} (KPSP ${p.s.form} bulan).`;
+    if (p.noTidak) notes += `<div class="note ok small">Semua jawaban terverifikasi “Ya”, jadi semua bidang ditampilkan dalam urutan baku. Lanjutkan stimulasi untuk menguatkan kemampuan ${esc(c.name)}.</div>`;
+    if (cat !== "S") notes += `<div class="note ${cat === "P" ? "bad" : "warn"} small"><b>Hasil skrining: ${CATS[cat].k}.</b> ${cat === "P" ? "Stimulasi di rumah tidak menggantikan pemeriksaan. Segera periksakan anak ke dokter, Puskesmas, atau klinik tumbuh kembang." : "Lakukan stimulasi lebih sering dan ulangi skrining 2 minggu lagi. Bila tetap meragukan, konsultasikan ke tenaga kesehatan."}</div>`;
+  } else {
+    intro = `Stimulasi umum untuk umur ${p.g.label}, dalam urutan baku bidang perkembangan.`;
+    notes = p.mode === "pending"
+      ? `<div class="note info small">Skrining masih menunggu verifikasi dokter. Sementara itu, lakukan stimulasi umum ini. Urutan khusus untuk ${esc(c.name)} muncul setelah hasil diverifikasi.</div>`
+      : `<div class="note info small">Setelah skrining diverifikasi dokter, stimulasi akan diurutkan sesuai kebutuhan ${esc(c.name)}. <button class="btn sm" style="margin-left:6px" data-act="tab" data-t="skrining">Mulai skrining</button></div>`;
+  }
+  const safety = p.g.min < 36 ? `<div class="note warn small">Dampingi anak selama bermain. Jauhkan benda kecil seperti kancing, baterai, atau manik-manik yang bisa tertelan.</div>` : "";
+  const secs = p.secs.map(sec => `<section class="dom">
+      <div class="dom-h"><span class="dot" style="background:${DOMS[sec.d].c}"></span><h2 class="h2" style="margin:0">${DOMS[sec.d].k}</h2>${sec.n !== null ? `<span class="stt">${sec.n} butir “Tidak”</span>` : ""}</div>
+      <div class="tips">${sec.acts.map(x => `<article class="tip" style="border-left-color:${DOMS[sec.d].c}">
+        <h3>${esc(x.a[0])}</h3><p>${esc(x.a[1])}</p>
+        ${x.items.length ? `<p class="small for"><b>Terkait butir “Tidak”:</b> ${x.items.map(i => `no. ${i + 1}, ${esc(p.items[i][1])}`).join("; ")}</p>` : ""}
+      </article>`).join("")}</div>
+    </section>`).join("");
+  return `<div class="stack">
+    <div><h1 class="title">Stimulasi</h1><p class="muted">${intro}</p></div>
+    ${notes}${safety}
+    <div class="card"><h2 class="h2">Prinsip dasar</h2><ul class="list small">${STIM_RULES.map(r => `<li>${esc(r)}</li>`).join("")}</ul></div>
+    ${secs}
+    <p class="foot">Sumber: ${esc(STIM_META.sumber)} · Peninjau: ${esc(STIM_META.peninjau)} · Tanggal tinjau: ${esc(STIM_META.tanggal)}. Bila anak kehilangan kemampuan yang sebelumnya sudah ada, segera konsultasikan dengan dokter.</p>
+  </div>`;
+}
+
+/* ---------- riwayat dan laporan ---------- */
+function statusLabel(s) {
+  if (s.status === "draft") return "Draf";
+  if (s.status === "menunggu") return "Menunggu verifikasi";
+  return CATS[category(yesCount(s.verify.final))].k;
+}
+function viewRiwayat(c) {
+  if (ui.report) { const x = findSession(ui.report); if (x) return viewReport(x.c, x.s); ui.report = null; }
+  const rows = [...c.sessions].reverse().map(s => `<tr>
+      <td>${fmtDate(s.at)}</td><td>KPSP ${s.form} bl</td><td>${ROLES[s.by]}</td>
+      <td class="st"><span class="pill ${s.status === "terverifikasi" ? CATS[category(yesCount(s.verify.final))].cls : ""}">${statusLabel(s)}</span></td>
+      <td>${s.status === "draft" ? `<button class="btn sm" data-act="tab" data-t="skrining">Lanjutkan</button>` : `<button class="btn sm" data-act="report" data-s="${s.id}">Laporan</button>`}</td></tr>`).join("");
+  return `<div class="stack">
+    <div><h1 class="title">Riwayat skrining</h1><p class="muted">Semua skrining ${esc(c.name)}. Laporan ringkas dapat dicetak atau dibawa saat konsultasi.</p></div>
+    ${rows ? `<div class="card scroll"><table class="rt"><thead><tr><th>Tanggal</th><th>Formulir</th><th>Diisi oleh</th><th>Hasil</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
+      : `<div class="card empty"><p class="muted">Belum ada skrining.</p><button class="btn pri" style="margin-top:10px" data-act="tab" data-t="skrining">Mulai skrining</button></div>`}
+    ${data.role === "ortu" ? `<div class="row"><button class="btn sm" data-act="export">Unduh data anak (JSON)</button></div><p class="small muted">Data ekspor memakai kode anak tanpa nama, dengan struktur yang disiapkan untuk dipetakan ke format SATUSEHAT.</p>` : ""}
+  </div>`;
+}
+function reportText(c, s) {
+  const items = KPSP[s.form];
+  let t = `LAPORAN RINGKAS SKRINING PERKEMBANGAN (CogniTrack)\nKode anak: ${c.code}\nTanggal lahir: ${fmtDate(c.dob)}\nTanggal skrining: ${fmtDate(s.at)}\nUmur saat skrining: ${ageText(s.age)} (${s.age.rounded} bulan)\nFormulir: KPSP ${s.form} bulan\nDiisi oleh: ${ROLES[s.by]}\nStatus: ${statusLabel(s)}\n`;
+  if (s.verify) t += `Diverifikasi: ${s.verify.doctor}, ${fmtTime(s.verify.at)}\nJumlah Ya: ${yesCount(s.verify.final)}/${items.length}\nKategori: ${CATS[category(yesCount(s.verify.final))].k}\n`;
+  t += "\nButir (jawaban pengguna → jawaban akhir):\n";
+  items.forEach((it, i) => { t += `${i + 1}. [${DOMS[it[0]].k}] ${it[1]}\n   ${s.answers[i] ? "Ya" : "Tidak"} → ${s.verify ? (s.verify.final[i] ? "Ya" : "Tidak") : "belum diverifikasi"}\n`; });
+  if (s.verify && s.verify.note) t += `\nCatatan dokter: ${s.verify.note}\n`;
+  if (s.verify) t += "\nSaran:\n" + advice(s).map(x => "- " + x).join("\n") + "\n";
+  return t + "\n" + NOT_DIAGNOSIS;
+}
+function viewReport(c, s) {
+  const items = KPSP[s.form], v = s.verify;
+  const perDom = DOM_ORDER.map(d => {
+    const idx = items.map((it, i) => it[0] === d ? i : -1).filter(i => i >= 0);
+    const src = v ? v.final : s.answers;
+    return `<tr><td>${DOMS[d].k}</td><td>${idx.filter(i => src[i] === true).length}</td><td>${idx.filter(i => src[i] === false).length}</td></tr>`;
+  }).join("");
+  const rows = items.map((it, i) => {
+    const corr = v && v.final[i] !== s.answers[i];
+    return `<tr class="${corr ? "corr" : ""}"><td>${i + 1}</td><td>${esc(it[1])}<div class="small muted">${DOMS[it[0]].k}</div></td><td>${s.answers[i] ? "Ya" : "Tidak"}</td><td>${v ? (v.final[i] ? "Ya" : "Tidak") + (corr ? " *" : "") : "–"}</td></tr>`;
+  }).join("");
+  return `<div class="stack">
+    <div class="noprint row" style="margin-top:0"><button class="btn sm" data-act="closereport">← Kembali ke riwayat</button></div>
+    <div class="card">
+      <h1 style="font-size:1.4rem;margin-bottom:10px">Laporan ringkas skrining perkembangan</h1>
+      <dl class="kv">
+        <dt>Anak</dt><dd>${esc(c.name)} · kode ${esc(c.code)}</dd>
+        <dt>Tanggal lahir</dt><dd>${fmtDate(c.dob)}${c.prem ? " · lahir prematur (umur tidak dikoreksi)" : ""}</dd>
+        <dt>Tanggal skrining</dt><dd>${fmtDate(s.at)} · diisi oleh ${ROLES[s.by]}</dd>
+        <dt>Umur</dt><dd>${ageText(s.age)} (${s.age.rounded} bulan)</dd>
+        <dt>Formulir</dt><dd>KPSP ${s.form} bulan</dd>
+        <dt>Status</dt><dd>${v ? `Diverifikasi oleh ${esc(v.doctor)}, ${fmtTime(v.at)}` : s.status === "menunggu" ? "Menunggu verifikasi dokter" : "Draf"}</dd>
+      </dl>
+      ${v ? resultBlock(s, false) : `<div class="note info" style="margin-top:14px">Kategori hasil belum ditampilkan karena jawaban belum diverifikasi dokter.</div>`}
+      <h2 class="h2" style="margin-top:18px">Ringkasan per bidang ${v ? "(jawaban akhir)" : "(jawaban pengguna)"}</h2>
+      <table class="rt"><thead><tr><th>Bidang</th><th>Ya</th><th>Tidak</th></tr></thead><tbody>${perDom}</tbody></table>
+      <h2 class="h2" style="margin-top:18px">Jawaban per butir</h2>
+      <div class="scroll"><table class="rt"><thead><tr><th>No</th><th>Butir</th><th>Pengguna</th><th>Akhir</th></tr></thead><tbody>${rows}</tbody></table></div>
+      ${v && corrections(s) ? `<p class="small muted">* dikoreksi dokter</p>` : ""}
+      ${KPSP_DRAFT ? `<p class="foot">Teks butir pada prototype ini masih draf dan belum identik dengan Buku Bagan SDIDTK.</p>` : ""}
+    </div>
+    <div class="row noprint">
+      <button class="btn pri" data-act="print">Cetak / simpan PDF</button>
+      <button class="btn" data-act="copy" data-s="${s.id}">${ui.copied ? "Tersalin" : "Salin sebagai teks"}</button>
+    </div>
+    ${ui.showText ? `<div class="noprint"><label for="ta">Salin teks di bawah secara manual</label><textarea id="ta" readonly style="min-height:220px">${esc(reportText(c, s))}</textarea></div>` : ""}
+  </div>`;
+}
+function exportJSON(c) {
+  const out = {
+    app: "CogniTrack MVP (prototype)", exportedAt: new Date().toISOString(),
+    child: { code: c.code, birthDate: c.dob, premature: c.prem, consent: c.consent },
+    screenings: c.sessions.filter(s => s.status !== "draft").map(s => ({
+      instrument: "KPSP", formAgeMonths: s.form, date: s.at, ageAtScreening: s.age, filledBy: s.by, status: s.status,
+      items: KPSP[s.form].map((it, i) => ({ no: i + 1, domain: it[0], userAnswer: s.answers[i], finalAnswer: s.verify ? s.verify.final[i] : null })),
+      yesCount: s.verify ? yesCount(s.verify.final) : null,
+      category: s.verify ? CATS[category(yesCount(s.verify.final))].k : null,
+      verifiedAt: s.verify ? new Date(s.verify.at).toISOString() : null
+    }))
+  };
+  const url = URL.createObjectURL(new Blob([JSON.stringify(out, null, 2)], { type: "application/json" }));
+  const a = document.createElement("a"); a.href = url; a.download = `cognitrack-${c.code}.json`;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/* ---------- dokter ---------- */
+/* Prototipe: video tidak benar-benar direkam atau diunggah. Sesi dengan persetujuan video
+   ditandai s.video = true, dan halaman video menampilkan contoh tampilan pemutar per butir. */
+const hasVideo = s => !!(s.video || s.videoCount);
+const clipsOf = s => hasVideo(s) ? KPSP[s.form].map((it, i) => i).filter(i => !KPSP[s.form][i][3].includes("n")) : [];
+const clipSec = (s, i) => 12 + ((i * 17 + s.form) % 38);
+const mmss = t => Math.floor(t / 60) + ":" + pad(t % 60);
+const PROTO_VIDEO = `<div class="note warn small"><b>Ini hanyalah prototipe.</b> Video belum benar-benar direkam atau diunggah. Halaman ini menampilkan contoh tampilan pemutar video untuk dokter.</div>`;
+function sessionMeta(c, s) {
+  return `Kode <b>${esc(c.code)}</b> · KPSP ${s.form} bulan · umur ${s.age.rounded} bulan · diisi ${ROLES[s.by]}${c.prem ? " · prematur" : ""}`;
+}
+function thumb(s, i, small) {
+  const it = KPSP[s.form][i];
+  return `<span class="thumb${small ? " sm" : ""}" style="--c:${DOMS[it[0]].c}" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/></svg><em>${mmss(clipSec(s, i))}</em></span>`;
+}
+function viewAntrean() {
+  if (ui.vd) { const x = findSession(ui.vd.sid); if (x && x.s.status === "menunggu") return viewVerify(x.c, x.s); ui.vd = null; }
+  const now = Date.now();
+  const q = allSessions().filter(x => x.s.status === "menunggu").sort((a, b) => a.s.submittedAt - b.s.submittedAt);
+  const week = allSessions().filter(x => x.s.status === "terverifikasi" && now - x.s.verify.at < 7 * 864e5).length;
+  const tile = (n, l) => `<div class="stat"><b>${n}</b><span>${l}</span></div>`;
+  return `<div class="stack">
+    <div><h1 class="title">Dasbor dokter</h1><p class="muted">Tinjau video, konfirmasi atau koreksi jawaban per butir, lalu tetapkan hasil akhir. Nama anak tidak ditampilkan.</p></div>
+    <div class="stats">
+      ${tile(q.length, "menunggu verifikasi")}
+      ${tile(q.filter(x => hasVideo(x.s)).length, "disertai video")}
+      ${tile(q.length ? fmtDur(now - q[0].s.submittedAt) : "–", "antrean terlama")}
+      ${tile(week, "diverifikasi 7 hari terakhir")}
+    </div>
+    <h2 class="h2" style="margin:6px 0 -4px">Antrean verifikasi</h2>
+    ${q.length ? q.map(({ c, s }) => {
+      const cl = clipsOf(s);
+      return `<article class="card qrow">
+        ${cl.length ? thumb(s, cl[0]) : `<span class="thumb none" aria-hidden="true">Tanpa video</span>`}
+        <div class="qmain"><p>${sessionMeta(c, s)}</p>
+          <p class="small muted">Dikirim ${fmtTime(s.submittedAt)} · menunggu ${fmtDur(now - s.submittedAt)} · ${cl.length ? cl.length + " klip video" : "tanpa video"}</p></div>
+        <div class="row" style="margin-top:0">
+          ${cl.length ? `<button class="btn sm" data-act="vopen" data-s="${s.id}" data-back="antrean">Lihat video</button>` : ""}
+          <button class="btn pri sm" data-act="review" data-s="${s.id}">Tinjau</button>
+        </div>
+      </article>`;
+    }).join("") : `<div class="card empty"><p class="muted">Tidak ada checklist yang menunggu verifikasi.</p></div>`}
+  </div>`;
+}
+function vdPreview(items) {
+  const y = yesCount(ui.vd.final), cat = CATS[category(y)];
+  return `Jawaban akhir: <b>${y}/${items.length} Ya</b> → <b>${cat.k}</b> · ${ui.vd.final.filter((v, i) => v !== ui.vd.user[i]).length} butir dikoreksi`;
+}
+function finalSeg(i, final) {
+  return `<div class="seg" role="group" aria-label="Jawaban akhir butir ${i + 1}"><button data-act="vset" data-i="${i}" data-v="y" aria-pressed="${final === true}">Ya</button><button data-act="vset" data-i="${i}" data-v="n" aria-pressed="${final === false}">Tidak</button></div>`;
+}
+function viewVerify(c, s) {
+  const items = KPSP[s.form], vd = ui.vd, cl = clipsOf(s);
+  const rows = items.map((it, i) => `<article class="item vrow2 ${vd.final[i] !== s.answers[i] ? "corr" : ""}" data-vrow="${i}">
+      ${itemHead(it, i)}
+      <p>${esc(it[1])}</p>
+      <div class="vans"><span class="small">Pengguna: <b>${s.answers[i] ? "Ya" : "Tidak"}</b></span>
+        <span class="small">Jawaban akhir:</span>
+        ${finalSeg(i, vd.final[i])}
+        <span class="small corr-lbl">dikoreksi</span>
+        ${cl.includes(i) ? `<button class="linkbtn small" data-act="vopen" data-s="${s.id}" data-i="${i}" data-back="verify">Lihat video butir ${i + 1}</button>` : ""}
+      </div>
+    </article>`).join("");
+  return `<div class="stack">
+    <div class="row" style="margin-top:0"><button class="btn sm" data-act="closereview">← Kembali ke dasbor</button></div>
+    <div><h1 class="title">Verifikasi checklist</h1><p class="muted">${sessionMeta(c, s)} · umur ${ageText(s.age)} · dikirim ${fmtTime(s.submittedAt)}</p></div>
+    ${draftBanner()}
+    <section class="card"><h2 class="h2">Video dari pengguna</h2>
+      ${cl.length ? `<div class="strip">${cl.map(i => `<button class="clipbtn" data-act="vopen" data-s="${s.id}" data-i="${i}" data-back="verify">${thumb(s, i, true)}<span class="small">Butir ${i + 1}</span></button>`).join("")}</div>
+        <div class="row"><button class="btn sm" data-act="vopen" data-s="${s.id}" data-back="verify">Buka halaman video (${cl.length} klip)</button></div>
+        <fieldset class="fs-radio"><legend>Apakah video dapat dinilai?</legend>
+          <label class="chk"><input type="radio" name="vok" value="1" data-in="vok" ${vd.videoOk === true ? "checked" : ""}> Dapat dinilai</label>
+          <label class="chk"><input type="radio" name="vok" value="0" data-in="vok" ${vd.videoOk === false ? "checked" : ""}> Tidak dapat dinilai (kualitas rekaman kurang)</label>
+        </fieldset>`
+        : `<p class="muted small">${c.consent.video ? "Pengguna mengirim tanpa video." : "Orang tua tidak menyetujui perekaman video."} Telaah berdasarkan jawaban pengguna.</p>`}
+    </section>
+    <section class="card"><h2 class="h2">Jawaban per butir</h2>
+      <p class="small muted" style="margin-bottom:6px">Jawaban akhir terisi sama dengan jawaban pengguna. Ubah bila video atau telaah menunjukkan jawaban berbeda. Butir kebiasaan ditelaah dari jawaban pengguna dan dapat dikonfirmasi saat kunjungan.</p>
+      ${rows}
+    </section>
+    <section class="card">
+      <p class="note info" id="vprev">${vdPreview(items)}</p>
+      ${ui.err ? `<p class="err" role="alert" style="margin-top:10px">${esc(ui.err)}</p>` : ""}
+      <div class="field" style="margin-top:14px"><label for="dn">Nama dokter pemverifikasi</label><input id="dn" type="text" maxlength="60" value="${esc(vd.doctor)}" data-in="doctor" autocomplete="off"></div>
+      <div class="field"><label for="vn">Catatan untuk orang tua (opsional, bahasa sederhana)</label><textarea id="vn" maxlength="600" data-in="note">${esc(vd.note)}</textarea></div>
+      <button class="btn pri" data-act="verify">Tetapkan hasil akhir</button>
+    </section>
+  </div>`;
+}
+function patchVerify(i) {
+  const x = findSession(ui.vd.sid); if (!x) return;
+  const row = app.querySelector(`[data-vrow="${i}"]`);
+  if (row) {
+    row.classList.toggle("corr", ui.vd.final[i] !== x.s.answers[i]);
+    row.querySelectorAll("[data-act=vset]").forEach(b => b.setAttribute("aria-pressed", String((b.dataset.v === "y") === ui.vd.final[i])));
+  }
+  const pv = app.querySelector("#vprev"); if (pv) pv.innerHTML = vdPreview(KPSP[x.s.form]);
+}
+function viewVideos() {
+  const x = findSession(ui.vview.sid), vv = ui.vview;
+  if (!x) { ui.vview = null; return viewAntrean(); }
+  const { c, s } = x, items = KPSP[s.form], cl = clipsOf(s);
+  const editable = vv.back === "verify" && ui.vd && ui.vd.sid === s.id && s.status === "menunggu";
+  const finalOf = i => editable ? ui.vd.final[i] : s.verify ? s.verify.final[i] : null;
+  const back = vv.back === "verify" ? "← Kembali ke verifikasi" : vv.back === "selesai" ? "← Kembali ke daftar terverifikasi" : "← Kembali ke dasbor";
+  if (!cl.length) return `<div class="stack"><div class="row" style="margin-top:0"><button class="btn sm" data-act="vclose">${back}</button></div><div class="card empty"><p class="muted">Sesi ini tidak disertai video.</p></div></div>`;
+  if (!cl.includes(vv.clip)) vv.clip = cl[0];
+  const i = vv.clip, it = items[i], pos = cl.indexOf(i), dur = clipSec(s, i), fin = finalOf(i);
+  const ans = (v, lbl) => `<span class="achip ${v === true ? "y" : v === false ? "n" : ""}">${lbl}: ${v === true ? "Ya" : v === false ? "Tidak" : "–"}</span>`;
+  const habit = items.map((t, k) => k).filter(k => items[k][3].includes("n"));
+  return `<div class="stack">
+    <div class="row" style="margin-top:0"><button class="btn sm" data-act="vclose">${back}</button></div>
+    <div><h1 class="title">Video dari pengguna</h1><p class="muted">${sessionMeta(c, s)} · dikirim ${fmtTime(s.submittedAt)} · ${cl.length} klip</p></div>
+    ${PROTO_VIDEO}
+    <div class="vpage">
+      <div class="stack" style="gap:12px">
+        <div class="player" style="--c:${DOMS[it[0]].c}" role="img" aria-label="Contoh tampilan video butir ${i + 1}">
+          <div class="p-top"><span>Butir ${i + 1} · ${DOMS[it[0]].k}</span><span class="p-badge">Contoh tampilan</span></div>
+          <svg class="p-kid" viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="34" r="16" fill="currentColor"/><path d="M34 104c0-24 11-44 26-44s26 20 26 44z" fill="currentColor"/></svg>
+          <button class="p-play" data-act="vplay" aria-label="${vv.playing ? "Jeda" : "Putar"} (contoh)">${vv.playing
+            ? `<svg viewBox="0 0 24 24"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor"/></svg>`
+            : `<svg viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/></svg>`}</button>
+          <div class="p-bar"><span class="p-track"><i class="${vv.playing ? "run" : ""}" style="--dur:${dur}s"></i></span><span class="p-time">${vv.playing ? "memutar" : "0:00"} / ${mmss(dur)}</span></div>
+        </div>
+        <p class="small muted">Video belum tersedia di prototipe. Pada aplikasi, rekaman orang tua atau guru diputar di sini dan hanya dapat diakses dokter pemverifikasi.</p>
+        <section class="card">
+          ${itemHead(it, i)}
+          <p class="q">${esc(it[1])}</p>
+          <div class="vans">${ans(s.answers[i], "Pengguna")}${editable
+            ? `<span class="small">Jawaban akhir:</span>${finalSeg(i, fin)}${fin !== s.answers[i] ? `<span class="corr-lbl" style="display:inline-block">dikoreksi</span>` : ""}`
+            : ans(fin, "Akhir")}</div>
+          <div class="row">
+            <button class="btn sm" data-act="vclip" data-i="${cl[pos - 1]}" ${pos > 0 ? "" : "disabled"}>← Klip sebelumnya</button>
+            <span class="small muted">${pos + 1} dari ${cl.length}</span>
+            <button class="btn sm" data-act="vclip" data-i="${cl[pos + 1]}" ${pos < cl.length - 1 ? "" : "disabled"}>Klip berikutnya →</button>
+          </div>
+        </section>
+      </div>
+      <aside class="card clips" aria-label="Daftar klip">
+        <h2 class="h2">Klip per butir</h2>
+        ${cl.map(k => `<button class="clip" data-act="vclip" data-i="${k}" aria-current="${k === i}">
+            ${thumb(s, k, true)}
+            <span class="clip-t"><span><b>Butir ${k + 1}</b> · ${DOMS[items[k][0]].k}</span><span class="small muted">${esc(items[k][1])}</span>
+            <span class="small">${s.answers[k] ? "Ya" : "Tidak"}${finalOf(k) !== null && finalOf(k) !== s.answers[k] ? ` → ${finalOf(k) ? "Ya" : "Tidak"} (dikoreksi)` : ""}</span></span>
+          </button>`).join("")}
+        ${habit.length ? `<p class="small muted" style="margin-top:10px">Tidak direkam (kebiasaan): butir ${habit.map(k => k + 1).join(", ")}.</p>` : ""}
+      </aside>
+    </div>
+  </div>`;
+}
+function viewSelesai() {
+  const list = allSessions().filter(x => x.s.status === "terverifikasi").sort((a, b) => b.s.verify.at - a.s.verify.at);
+  return `<div class="stack">
+    <div><h1 class="title">Sudah diverifikasi</h1><p class="muted">Pada penelitian, semua video dihapus setelah periode penelitian berakhir.</p></div>
+    ${list.length ? `<div class="card scroll"><table class="rt"><thead><tr><th>Anak</th><th>Formulir</th><th>Diverifikasi</th><th>Hasil</th><th>Video</th></tr></thead><tbody>${list.map(({ c, s }) => `<tr>
+        <td>${esc(c.code)}</td><td>KPSP ${s.form} bl</td><td>${fmtTime(s.verify.at)}<div class="small muted">${esc(s.verify.doctor)} · ${corrections(s)} dikoreksi</div></td>
+        <td><span class="pill ${CATS[category(yesCount(s.verify.final))].cls}">${statusLabel(s)}</span></td>
+        <td>${hasVideo(s) ? `<button class="btn sm" data-act="vopen" data-s="${s.id}" data-back="selesai">Lihat video</button>` : `<span class="small muted">Tidak ada</span>`}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="card empty"><p class="muted">Belum ada checklist yang diverifikasi.</p></div>`}
+  </div>`;
+}
+function kappa(pairs, cats) {
+  const n = pairs.length; if (!n) return null;
+  const a = {}, b = {}; let po = 0;
+  cats.forEach(k => { a[k] = 0; b[k] = 0; });
+  pairs.forEach(([x, y]) => { if (x === y) po++; a[x]++; b[y]++; });
+  po /= n;
+  const pe = cats.reduce((t, k) => t + (a[k] / n) * (b[k] / n), 0);
+  return { n, po, k: pe === 1 ? null : (po - pe) / (1 - pe) };
+}
+function landisKoch(k) {
+  if (k === null) return "tidak dapat dihitung (semua jawaban sama)";
+  if (k < 0) return "buruk (poor)";
+  if (k <= 0.2) return "sangat lemah (slight)";
+  if (k <= 0.4) return "lemah (fair)";
+  if (k <= 0.6) return "sedang (moderate)";
+  if (k <= 0.8) return "kuat (substantial)";
+  return "hampir sempurna (almost perfect)";
+}
+function viewIndikator() {
+  const all = allSessions().map(x => x.s);
+  const done = all.filter(s => s.status !== "draft"), ver = all.filter(s => s.status === "terverifikasi");
+  const withVid = done.filter(hasVideo), verVid = ver.filter(hasVideo);
+  const okVid = verVid.filter(s => s.verify.videoOk === true);
+  const times = ver.map(s => s.verify.at - s.submittedAt);
+  const md = median(times);
+  let nItems = 0, nCorr = 0; const ip = [], cp = [];
+  ver.forEach(s => {
+    s.answers.forEach((u, i) => { nItems++; if (u !== s.verify.final[i]) nCorr++; ip.push([u ? "Y" : "T", s.verify.final[i] ? "Y" : "T"]); });
+    cp.push([category(yesCount(s.answers)), category(yesCount(s.verify.final))]);
+  });
+  const ki = kappa(ip, ["Y", "T"]), kc = kappa(cp, ["S", "M", "P"]);
+  const krow = (lbl, k) => `<tr><td>${lbl}</td><td>${k ? `κ = ${k.k === null ? "–" : dec(k.k)} · kesepakatan ${pct(k.po * k.n, k.n)} · n = ${k.n}<div class="small muted">${landisKoch(k.k)}</div>` : "–"}</td></tr>`;
+  return `<div class="stack">
+    <div><h1 class="title">Indikator feasibility</h1><p class="muted">Dihitung dari data di perangkat ini untuk uji feasibility alur verifikasi (Subbab 3.4). Gunakan data dummy saat uji fungsionalitas.</p></div>
+    <div class="card scroll"><table class="rt"><tbody>
+      <tr><td>Sesi skrining diselesaikan dari yang dimulai</td><td>${done.length}/${all.length} (${pct(done.length, all.length)})</td></tr>
+      <tr><td>Checklist yang disertai video</td><td>${withVid.length}/${done.length} (${pct(withVid.length, done.length)})</td></tr>
+      <tr><td>Checklist dengan video yang dapat dinilai</td><td>${okVid.length}/${verVid.length} terverifikasi dengan video (${pct(okVid.length, verVid.length)})</td></tr>
+      <tr><td>Checklist terverifikasi</td><td>${ver.length}/${done.length} (${pct(ver.length, done.length)})</td></tr>
+      <tr><td>Median waktu unggah hingga verifikasi</td><td>${md === null ? "–" : fmtDur(md)}</td></tr>
+      <tr><td>Butir yang dikoreksi dokter</td><td>${nCorr}/${nItems} (${pct(nCorr, nItems)})</td></tr>
+      ${krow("Cohen's kappa pengguna–dokter, per butir", ki)}
+      ${krow("Cohen's kappa pengguna–dokter, per kategori hasil", kc)}
+    </tbody></table></div>
+    <p class="foot">Interpretasi kappa menurut Landis dan Koch (1977). Kesepakatan antar-dokter (20% checklist ditinjau dua dokter) belum tersedia di prototype ini. Pada prototipe, “disertai video” berarti orang tua menyetujui perekaman; videonya sendiri belum diunggah.</p>
+  </div>`;
+}
+
+/* ---------- data contoh (dummy) ---------- */
+function isoAgo(months, days) { const t = new Date(); t.setMonth(t.getMonth() - months); t.setDate(t.getDate() - days); return isoOf(t); }
+function loadDemo() {
+  const now = Date.now(), consent = { wali: "Orang tua contoh", rel: "Ibu", at: todayISO(), data: true, video: true, guru: true };
+  const mk = (name, dob) => ({ id: "c" + Math.random().toString(36).slice(2, 9), code: newCode(), name, dob, prem: false, consent: { ...consent }, demo: true, sessions: [] });
+  const a = mk("Contoh Rara", isoAgo(26, 5)), b = mk("Contoh Bima", isoAgo(10, 20));
+  const sa = { id: "s" + now, at: isoAgo(0, 3), form: 24, age: ageParts(a.dob, isoAgo(0, 3)), by: "ortu", step: "video", video: true,
+    answers: [true, true, false, false, true, true, true, true, true, false], status: "terverifikasi", submittedAt: now - 3 * 864e5 };
+  sa.verify = { final: [true, true, false, false, true, true, true, false, true, false], note: "Latih kosakata dan kemampuan menunjuk bagian tubuh setiap hari.", videoOk: true, doctor: "dr. Contoh, Sp.A", at: now - 2 * 864e5 };
+  const f = formFor(ageParts(b.dob, todayISO()).rounded);
+  const sb = { id: "s" + (now + 1), at: todayISO(), form: f, age: ageParts(b.dob, todayISO()), by: "guru", step: "video", video: true,
+    answers: KPSP[f].map((_, i) => i !== 3), status: "menunggu", submittedAt: now - 36e5, verify: null };
+  a.sessions.push(sa); b.sessions.push(sb);
+  data.children.push(a, b); data.active = a.id;
+}
+
+/* ---------- render ---------- */
+const app = document.getElementById("app");
+function render() {
+  document.documentElement.style.fontSize = (FS[data.fs] ?? 1) * 100 + "%";
+  if (!ui.tab || !TABS[data.role].some(t => t[0] === ui.tab)) ui.tab = TABS[data.role][0][0];
+  let body;
+  if (data.role === "dokter") {
+    body = tabs() + (ui.vview ? viewVideos() : ui.tab === "selesai" ? viewSelesai() : ui.tab === "indikator" ? viewIndikator() : viewAntrean());
+  } else {
+    const c = child();
+    if (c && c.id !== data.active) data.active = c.id;
+    if (data.role === "ortu" && (!c || ui.adding)) {
+      if (!ui.draft) ui.draft = blankDraft();
+      body = viewAdd();
+    } else if (!c) {
+      body = `<div class="card empty"><h1 class="h2">Belum ada anak didik</h1><p class="muted">Guru PAUD hanya dapat mengisi checklist untuk anak yang orang tuanya telah memberikan izin di CogniTrack.</p></div>`;
+    } else if (!c.consent || ui.editConsent) {
+      body = data.role === "ortu" ? viewConsent(c) : `<div class="card empty"><p class="muted">Menunggu persetujuan orang tua.</p></div>`;
+    } else {
+      body = tabs() + (ui.tab === "skrining" ? viewSkrining(c) : ui.tab === "stimulasi" ? viewStimulasi(c) : ui.tab === "riwayat" ? viewRiwayat(c) : viewBeranda(c));
+    }
+  }
+  app.innerHTML = header() + `<main>${body}</main>
+    <p class="foot noprint">Prototype Tahap 1 (MVP). Peran dapat diganti di kanan atas untuk demonstrasi, dan semua data tersimpan di peramban perangkat ini.</p>`;
+}
+
+/* ---------- event ---------- */
+function setField(el) {
+  const k = el.dataset.in; if (!k) return;
+  if (k === "vok") { if (ui.vd) ui.vd.videoOk = el.value === "1"; return; }
+  if ((k === "doctor" || k === "note") && ui.vd) { ui.vd[k] = el.value; return; }
+  if (!ui.draft) return;
+  ui.draft[k] = el.type === "checkbox" ? el.checked : el.value;
+}
+app.addEventListener("input", e => setField(e.target));
+app.addEventListener("change", e => {
+  const t = e.target, act = t.dataset.act;
+  if (act === "switch") { data.active = t.value; resetView(); save(); return render(); }
+  if (act === "role") { data.role = t.value; ui.tab = null; resetView(); save(); return render(); }
+  setField(t);
+  if (t.dataset.in === "cVideo" && ui.editConsent) render();
+});
+function resetView() {
+  Object.assign(ui, { adding: false, draft: null, err: "", confirm: null, editConsent: false, report: null, vd: null, vview: null, copied: false, showText: false });
+}
+app.addEventListener("click", e => {
+  const el = e.target.closest("[data-act]");
+  if (!el || el.tagName === "SELECT" || el.tagName === "INPUT" || el.disabled) return;
+  const act = el.dataset.act, c = child();
+  if (act === "vset") {
+    ui.vd.final[+el.dataset.i] = el.dataset.v === "y";
+    return ui.vview ? render() : patchVerify(+el.dataset.i);
+  }
+  ui.err = "";
+  if (act === "tab") { ui.tab = el.dataset.t; resetView(); window.scrollTo(0, 0); }
+  else if (act === "fs") { data.fs = Math.max(0, Math.min(FS.length - 1, (data.fs ?? 1) + +el.dataset.d)); save(); }
+  else if (act === "nope") ui.confirm = null;
+  else if (act === "showadd") { ui.adding = true; ui.draft = blankDraft(); }
+  else if (act === "canceladd") { ui.adding = false; ui.draft = null; }
+  else if (act === "demo") { loadDemo(); resetView(); ui.tab = "beranda"; save(); }
+  else if (act === "addchild") {
+    const d = ui.draft, name = d.name.trim();
+    if (!name) ui.err = "Isi nama panggilan anak.";
+    else if (!d.dob || isNaN(D(d.dob))) ui.err = "Isi tanggal lahir.";
+    else if (d.dob > todayISO()) ui.err = "Tanggal lahir tidak boleh di masa depan.";
+    else if (ageParts(d.dob, todayISO()).rounded > 72) ui.err = "CogniTrack Tahap 1 untuk anak umur 3–72 bulan. Periksa kembali tanggal lahirnya.";
+    else ui.err = consentErr(d);
+    if (!ui.err) {
+      const id = "c" + Date.now();
+      data.children.push({ id, code: newCode(), name, dob: d.dob, prem: d.prem, consent: consentOf(d), sessions: [] });
+      data.active = id; resetView(); ui.tab = "beranda"; save();
+    }
+  }
+  else if (act === "editconsent" && c) {
+    ui.editConsent = true;
+    ui.draft = { ...blankDraft(), wali: c.consent.wali, rel: c.consent.rel, cData: true, cVideo: c.consent.video, cGuru: c.consent.guru };
+  }
+  else if (act === "cancelconsent") { ui.editConsent = false; ui.draft = null; }
+  else if (act === "saveconsent" && c) {
+    ui.err = consentErr(ui.draft);
+    if (!ui.err) {
+      c.consent = consentOf(ui.draft); delete c.legacy;
+      ui.editConsent = false; ui.draft = null; save();
+    }
+  }
+  else if (act === "delask") ui.confirm = "delchild";
+  else if (act === "delyes" && c) {
+    data.children = data.children.filter(x => x.id !== c.id);
+    data.active = data.children.length ? data.children[0].id : null;
+    resetView(); save();
+  }
+  else if (act === "start" && c && !draftOf(c) && !pendingOf(c)) {
+    const at = todayISO(), age = ageParts(c.dob, at), form = formFor(age.rounded);
+    if (form) {
+      c.sessions.push({ id: "s" + Date.now(), at, form, age, by: data.role, step: "isi", answers: KPSP[form].map(() => null), status: "draft", verify: null });
+      save(); window.scrollTo(0, 0);
+    }
+  }
+  else if (act === "ans" && c) {
+    const dr = draftOf(c), i = +el.dataset.i, v = el.dataset.v === "y";
+    if (dr) { dr.answers[i] = dr.answers[i] === v ? null : v; save(); }
+    render();
+    const b = app.querySelector(`[data-act="ans"][data-i="${i}"][data-v="${el.dataset.v}"]`); if (b) b.focus({ preventScroll: true });
+    return;
+  }
+  else if (act === "canceldraft") ui.confirm = "canceldraft";
+  else if (act === "canceldraftyes" && c) { const dr = draftOf(c); if (dr) { c.sessions = c.sessions.filter(s => s !== dr); save(); } ui.confirm = null; }
+  else if (act === "tovideo" && c) { const dr = draftOf(c); if (dr && dr.answers.every(x => x !== null)) { dr.step = "video"; save(); window.scrollTo(0, 0); } }
+  else if (act === "toisi" && c) { const dr = draftOf(c); if (dr) { dr.step = "isi"; save(); } }
+  else if (act === "submit" && c) {
+    const dr = draftOf(c);
+    if (dr) { dr.status = "menunggu"; dr.submittedAt = Date.now(); dr.video = !!c.consent.video; ui.confirm = null; ui.tab = "beranda"; save(); window.scrollTo(0, 0); }
+  }
+  else if (act === "report") { ui.tab = data.role === "dokter" ? ui.tab : "riwayat"; ui.report = el.dataset.s; ui.copied = false; ui.showText = false; window.scrollTo(0, 0); }
+  else if (act === "closereport") { ui.report = null; ui.showText = false; ui.copied = false; }
+  else if (act === "print") { try { window.print(); } catch (x) { ui.showText = true; } }
+  else if (act === "copy") {
+    const x = findSession(el.dataset.s); if (!x) return;
+    const txt = reportText(x.c, x.s);
+    try { navigator.clipboard.writeText(txt).then(() => { ui.copied = true; render(); }, () => { ui.showText = true; render(); }); }
+    catch (err) { ui.showText = true; }
+  }
+  else if (act === "export" && c) exportJSON(c);
+  else if (act === "review") {
+    const x = findSession(el.dataset.s);
+    if (x) ui.vd = { sid: x.s.id, user: x.s.answers.slice(), final: x.s.answers.slice(), note: "", videoOk: null, doctor: data.doctorName || "" };
+    window.scrollTo(0, 0);
+  }
+  else if (act === "closereview") ui.vd = null;
+  else if (act === "verify" && ui.vd) {
+    const x = findSession(ui.vd.sid);
+    if (!x || x.s.status !== "menunggu") ui.vd = null;
+    else if (hasVideo(x.s) && ui.vd.videoOk === null) ui.err = "Tandai apakah video dapat dinilai.";
+    else if (!ui.vd.doctor.trim()) ui.err = "Isi nama dokter pemverifikasi.";
+    else {
+      data.doctorName = ui.vd.doctor.trim();
+      x.s.verify = { final: ui.vd.final.slice(), note: ui.vd.note.trim(), videoOk: hasVideo(x.s) ? ui.vd.videoOk : null, doctor: data.doctorName, at: Date.now() };
+      x.s.status = "terverifikasi"; ui.vd = null; save(); window.scrollTo(0, 0);
+    }
+  }
+  else if (act === "vopen") {
+    ui.vview = { sid: el.dataset.s, clip: el.dataset.i !== undefined ? +el.dataset.i : null, back: el.dataset.back, playing: false };
+    window.scrollTo(0, 0);
+  }
+  else if (act === "vclip") { ui.vview.clip = +el.dataset.i; ui.vview.playing = false; }
+  else if (act === "vplay") ui.vview.playing = !ui.vview.playing;
+  else if (act === "vclose") { ui.vview = null; window.scrollTo(0, 0); }
+  render();
+});
+render();
