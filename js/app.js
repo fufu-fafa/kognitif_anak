@@ -95,6 +95,7 @@ function stimGroup(form) { return STIMULASI.filter(g => g.min <= form).pop() || 
 const yesCount = arr => arr.filter(x => x === true).length;
 /* Ambang pedoman: Ya 9–10 sesuai, 7–8 meragukan, 6 atau kurang kemungkinan penyimpangan. */
 const category = yes => yes >= 9 ? "S" : yes >= 7 ? "M" : "P";
+const nobsOf = s => (s.verify && s.verify.notObserved) || [];
 const corrections = s => s.verify ? s.verify.final.filter((v, i) => v !== s.answers[i]).length : 0;
 
 function visibleKids() {
@@ -237,18 +238,37 @@ function resultBlock(s, withBtns) {
   return `<section class="card result ${cat.cls}">
     <p class="small muted">KPSP ${s.form} bulan · diisi ${fmtDate(s.at)} · diverifikasi ${fmtTime(s.verify.at)}</p>
     <h2 class="cat">${cat.k}</h2>
-    <p>${y} dari ${s.verify.final.length} jawaban “Ya” setelah verifikasi dokter.${corr ? ` Dokter mengoreksi ${corr} jawaban.` : ""}</p>
+    <p>${y} dari ${s.verify.final.length} jawaban “Ya” setelah verifikasi dokter.${corr ? ` Dokter mengoreksi ${corr} jawaban.` : ""}${nobsOf(s).length ? ` ${nobsOf(s).length} butir tetap tidak teramati setelah rekam ulang sehingga dinilai “Tidak”.` : ""}</p>
     <ul class="list" style="margin-top:10px">${advice(s).map(x => `<li>${esc(x)}</li>`).join("")}</ul>
     ${s.verify.note ? `<p class="small" style="margin-top:10px"><b>Catatan dokter:</b> ${esc(s.verify.note)}</p>` : ""}
     <p class="note info small" style="margin-top:12px">${NOT_DIAGNOSIS}</p>
     ${withBtns ? `<div class="row"><button class="btn pri sm" data-act="tab" data-t="stimulasi">Lihat stimulasi</button><button class="btn sm" data-act="report" data-s="${s.id}">Laporan ringkas</button></div>` : ""}
   </section>`;
 }
+/* ---------- rekam ulang: status proses, bukan jawaban ---------- */
+const DAY = 864e5, RR_DAYS = 7;
+const rrWaiting = s => !!(s.rerecord && !s.rerecord.resubmittedAt && Date.now() < s.rerecord.due);
+const rrOverdue = s => !!(s.rerecord && !s.rerecord.resubmittedAt && Date.now() >= s.rerecord.due);
+function rerecordBlock(s) {
+  const rr = s.rerecord; if (!rr) return "";
+  if (rr.resubmittedAt) return `<p class="note ok small">Video rekam ulang terkirim ${fmtTime(rr.resubmittedAt)}. Dokter akan menetapkan hasil akhir.</p>`;
+  if (rrOverdue(s)) return `<p class="note warn small"><b>Batas rekam ulang (${fmtTime(rr.due)}) sudah lewat.</b> Dokter akan menetapkan hasil akhir. Butir yang tetap tidak teramati dinilai “Tidak”. Bila hasilnya “Meragukan”, anak diperiksa ulang 2 minggu lagi sesuai Buku Bagan SDIDTK.</p>`;
+  const items = KPSP[s.form];
+  return `<div class="rr">
+    <h3 class="h3" style="margin-top:2px">Dokter meminta rekam ulang</h3>
+    <p class="small">Butir berikut belum teramati jelas di video. Rekam ulang sebelum <b>${fmtTime(rr.due)}</b>. Permintaan ini hanya diberikan sekali.</p>
+    <ol class="list plain small">${rr.items.map(i => `<li><b>${i + 1}.</b> ${esc(itemShort(items[i]))}</li>`).join("")}</ol>
+    ${rr.note ? `<p class="small"><b>Catatan dokter:</b> ${esc(rr.note)}</p>` : ""}
+    <p class="note warn small"><b>Ini hanyalah prototipe.</b> Video belum benar-benar direkam atau diunggah. Tombol di bawah hanya menandai bahwa rekaman ulang sudah dikirim.</p>
+    <div class="row"><button class="btn pri sm" data-act="resubmit" data-s="${s.id}">Kirim ulang video ke dokter</button></div>
+  </div>`;
+}
 function pendingBlock(s) {
   return `<section class="card result wait">
     <p class="small muted">KPSP ${s.form} bulan · dikirim ${fmtTime(s.submittedAt)}</p>
     <h2 class="cat">Menunggu verifikasi</h2>
     <p>Dokter sedang meninjau ${hasVideo(s) ? "video dan " : ""}jawaban checklist. Kategori hasil akan tampil setelah dokter menetapkan jawaban akhir.</p>
+    ${rerecordBlock(s)}
     <div class="row"><button class="btn sm" data-act="tab" data-t="stimulasi">Lihat stimulasi umum sesuai umur</button></div>
   </section>`;
 }
@@ -291,8 +311,79 @@ function itemGuide(it) {
   </dl></details>`;
 }
 function itemHead(it, i) {
-  return `<div class="item-h"><span class="num">${i + 1}</span>${domTag(it[0])}${it[3].includes("k") ? `<span class="tag ghost">terkait kognitif</span>` : ""}${it[3].includes("n") ? `<span class="tag ghost">kebiasaan, tidak direkam</span>` : ""}</div>`;
+  return `<div class="item-h"><span class="num">${i + 1}</span>${domTag(it[0])}${it[3].includes("k") ? `<span class="tag ghost">terkait kognitif</span>` : ""}${it[3].includes("n") ? `<span class="tag ghost">ditanyakan, tidak direkam</span>` : ""}</div>`;
 }
+/* Ringkasan butir untuk daftar (judul butir bila ada + kalimat pertanyaan). Teks lengkap tetap tampil di checklist. */
+function itemShort(it) {
+  const t = it[1], lines = t.split("\n"), flat = t.replace(/\n/g, " ");
+  const head = lines.length > 1 && !/[?:.]$/.test(lines[0]) && lines[0].length < 70 ? lines[0] : "";
+  const qs = t.match(/[^.?!\n]*\?/g);
+  let q = qs ? qs[qs.length - 1].replace(/^[\s”"’]+/, "").trim() : lines[0];
+  if (qs && !head && q.length < 40) {
+    const before = (flat.slice(0, flat.lastIndexOf(q)).match(/[^.?!]+[.?!]\s*$/) || [""])[0].trim();
+    if (before) q = before + " " + q;
+  }
+  return head ? head + ": " + q : q;
+}
+function itemFig(it) {
+  return it[5] ? `<figure class="kfig"><img src="img/kpsp/${it[5]}.png" alt="Gambar butir dari ${esc(KPSP_SOURCE)}" loading="lazy">${it[6] ? `<figcaption class="small muted">${esc(it[6])}</figcaption>` : ""}</figure>` : "";
+}
+/* ---------- pertanyaan lanjutan (butir yang ditanyakan kepada orang tua) ---------- */
+function followSpec(it) {
+  if (!it[3].includes("n")) return null;
+  const r = FOLLOWUP_RULES.find(r => r[0].test(it[1]));
+  return r ? r[1] : FOLLOWUP_DEFAULT;
+}
+function followDone(sp, v) {
+  if (sp.t === "choice") return Number.isInteger(v);
+  if (sp.t === "words") return Array.isArray(v) && v.length >= sp.n && v.slice(0, sp.n).every(r => r && r.w.trim() && r.a.trim());
+  return typeof v === "string" && v.trim().length >= 2;
+}
+const followConflict = (sp, v) => sp.t === "choice" && Number.isInteger(v) && sp.bad.includes(v);
+const followOf = (s, i) => (s.follow || {})[i];
+/* Butir berjawaban "Ya" yang pertanyaan lanjutannya belum lengkap. */
+function followMissing(s) {
+  return KPSP[s.form].map((it, i) => i).filter(i => { const sp = followSpec(KPSP[s.form][i]); return sp && s.answers[i] === true && !followDone(sp, followOf(s, i)); });
+}
+function followText(sp, v) {
+  if (sp.t === "choice") return sp.opts[v];
+  if (sp.t === "words") return v.slice(0, sp.n).map(r => `“${r.w.trim()}” (${r.a.trim()})`).join(", ");
+  return v.trim();
+}
+function followForm(s, i) {
+  const sp = followSpec(KPSP[s.form][i]);
+  if (!sp || s.answers[i] !== true) return "";
+  const v = followOf(s, i);
+  let body;
+  if (sp.t === "words") body = Array.from({ length: sp.n }, (_, r) => {
+    const x = (v && v[r]) || { w: "", a: "" };
+    return `<div class="wrow"><span class="small muted">${r + 1}.</span><input type="text" maxlength="40" placeholder="Kata yang diucapkan" aria-label="Kata ${r + 1}" value="${esc(x.w)}" data-fw="${i}:${r}:w"><input type="text" maxlength="60" placeholder="Artinya" aria-label="Arti kata ${r + 1}" value="${esc(x.a)}" data-fw="${i}:${r}:a"></div>`;
+  }).join("");
+  else if (sp.t === "text") body = `<textarea rows="2" maxlength="300" placeholder="${esc(sp.ph || "")}" aria-label="${esc(sp.q)}" data-ft="${i}">${esc(v || "")}</textarea>`;
+  else body = `<div class="opts" role="radiogroup" aria-label="${esc(sp.q)}">${sp.opts.map((o, k) => `<button class="chipopt" role="radio" aria-checked="${v === k}" data-act="fchoice" data-i="${i}" data-o="${k}">${esc(o)}</button>`).join("")}</div>`;
+  return `<div class="follow"><p class="small"><b>Pertanyaan lanjutan.</b> ${esc(sp.q)}</p>${body}
+    <p class="small muted">Dokter menilai isi jawaban ini, bukan hanya kata “Ya”.</p></div>`;
+}
+/* Tanda "tidak konsisten" hanya untuk dokter, agar orang tua dan guru tidak terdorong mengubah jawaban. */
+function followView(s, i) {
+  const sp = followSpec(KPSP[s.form][i]);
+  if (!sp || s.answers[i] !== true) return "";
+  const v = followOf(s, i);
+  return `<div class="follow ro"><p class="small muted">Lanjutan: ${esc(sp.q)}</p><p>${followDone(sp, v) ? esc(followText(sp, v)) : `<span class="muted">Tidak diisi</span>`}${data.role === "dokter" && followConflict(sp, v) ? ` <span class="pill warn">tidak konsisten dengan “Ya”</span>` : ""}</p></div>`;
+}
+const canNext = dr => dr.answers.every(x => x !== null) && !followMissing(dr).length;
+function nextHint(dr) {
+  const left = dr.answers.filter(x => x === null).length, miss = followMissing(dr).length;
+  if (left) return `Jawab semua ${dr.answers.length} butir untuk melanjutkan.`;
+  if (miss) return `Lengkapi pertanyaan lanjutan pada butir ${followMissing(dr).map(i => i + 1).join(", ")}.`;
+  return "";
+}
+function refreshNext(dr) {
+  const b = app.querySelector('[data-act="tovideo"]'), h = app.querySelector("#nexthint");
+  if (b) b.disabled = !canNext(dr);
+  if (h) h.textContent = nextHint(dr);
+}
+
 function viewSkrining(c) {
   const pe = pendingOf(c), dr = draftOf(c);
   if (pe) return `<div class="stack"><h1 class="title">Skrining</h1>${pendingBlock(pe)}<p class="muted">Skrining baru dapat dimulai setelah skrining ini diverifikasi.</p></div>`;
@@ -308,38 +399,40 @@ function viewSkrining(c) {
   }
   const items = KPSP[dr.form];
   if (dr.step === "video") return viewVideo(c, dr, items);
-  const answered = dr.answers.filter(x => x !== null).length, all = answered === items.length;
+  const answered = dr.answers.filter(x => x !== null).length, ok = canNext(dr);
   const list = items.map((it, i) => `<article class="card item">
       ${itemHead(it, i)}
       <p class="q">${esc(it[1])}</p>
+      ${itemFig(it)}
       ${itemGuide(it)}
       <div class="seg" role="group" aria-label="Jawaban butir ${i + 1}">
         <button data-act="ans" data-i="${i}" data-v="y" aria-pressed="${dr.answers[i] === true}">Ya</button><button data-act="ans" data-i="${i}" data-v="n" aria-pressed="${dr.answers[i] === false}">Tidak</button>
       </div>
+      ${followForm(dr, i)}
     </article>`).join("");
   return `<div class="stack">
     <div><h1 class="title">KPSP ${dr.form} bulan</h1>
     <p class="muted">${esc(c.name)} · umur ${ageText(dr.age)} (${dr.age.rounded} bulan) · diisi oleh ${ROLES[dr.by]} · ${answered}/${items.length} dijawab</p></div>
     ${draftBanner()}
-    <div class="note info small">${RULE_ANSWER} Buka “Petunjuk pengamatan” pada setiap butir untuk alat, cara mengamati, dan cara merekam.</div>
+    <div class="note info small">${RULE_ANSWER} Buka “Petunjuk pengamatan” pada setiap butir untuk alat, cara mengamati, dan cara merekam.${KPSP_DRAFT ? "" : `<br><span class="muted">Teks butir dan gambar sesuai ${esc(KPSP_SOURCE)}.</span>`}</div>
     ${list}
     <div class="row">
-      <button class="btn pri" data-act="tovideo" ${all ? "" : "disabled"}>${c.consent.video ? "Lanjut ke unggah video" : "Lanjut ke pengiriman"}</button>
+      <button class="btn pri" data-act="tovideo" ${ok ? "" : "disabled"}>${c.consent.video ? "Lanjut ke unggah video" : "Lanjut ke pengiriman"}</button>
       ${ui.confirm === "canceldraft"
         ? `<span class="small">Buang jawaban skrining ini?</span><button class="btn sm danger" data-act="canceldraftyes">Ya, batalkan</button><button class="btn sm" data-act="nope">Tidak</button>`
         : `<button class="btn" data-act="canceldraft">Batalkan skrining</button>`}
     </div>
-    ${all ? "" : `<p class="small muted">Jawab semua ${items.length} butir untuk melanjutkan.</p>`}
+    <p class="small muted" id="nexthint">${nextHint(dr)}</p>
   </div>`;
 }
 function viewVideo(c, dr, items) {
   const rec = items.map((it, i) => ({ it, i })).filter(x => !x.it[3].includes("n"));
   const habit = items.map((it, i) => ({ it, i })).filter(x => x.it[3].includes("n"));
-  const li = x => `<li><b>${x.i + 1}.</b> ${esc(x.it[1])}</li>`;
+  const li = x => `<li><b>${x.i + 1}.</b> ${esc(itemShort(x.it))}</li>`;
   const body = c.consent.video ? `
     <p class="muted">Rekam ${esc(c.name)} saat melakukan tugas pada butir yang dapat diperagakan. Video hanya dapat dibuka oleh dokter pemverifikasi.</p>
     <div class="card"><h2 class="h2">Butir yang sebaiknya direkam</h2><ol class="list plain">${rec.map(li).join("")}</ol>
-      ${habit.length ? `<h3 class="h3">Tidak perlu direkam</h3><p class="small muted" style="margin-bottom:6px">Kebiasaan sehari-hari ini ditelaah dokter dari jawaban Anda dan dapat dikonfirmasi saat kunjungan.</p><ol class="list plain">${habit.map(li).join("")}</ol>` : ""}</div>
+      ${habit.length ? `<h3 class="h3">Tidak perlu direkam</h3><p class="small muted" style="margin-bottom:6px">Butir ini ditanyakan kepada orang tua atau pengasuh, jadi ditelaah dokter dari jawaban Anda dan dapat dikonfirmasi saat kunjungan.</p><ol class="list plain">${habit.map(li).join("")}</ol>` : ""}</div>
     <div class="note info small"><ul class="list">
       <li>Video pendek 10–60 detik per tugas. Satu video boleh berisi beberapa tugas.</li>
       <li>Sebutkan nomor butir di awal rekaman, misalnya “butir 3”.</li>
@@ -442,7 +535,7 @@ function reportText(c, s) {
   let t = `LAPORAN RINGKAS SKRINING PERKEMBANGAN (CogniTrack)\nKode anak: ${c.code}\nTanggal lahir: ${fmtDate(c.dob)}\nTanggal skrining: ${fmtDate(s.at)}\nUmur saat skrining: ${ageText(s.age)} (${s.age.rounded} bulan)\nFormulir: KPSP ${s.form} bulan\nDiisi oleh: ${ROLES[s.by]}\nStatus: ${statusLabel(s)}\n`;
   if (s.verify) t += `Diverifikasi: ${s.verify.doctor}, ${fmtTime(s.verify.at)}\nJumlah Ya: ${yesCount(s.verify.final)}/${items.length}\nKategori: ${CATS[category(yesCount(s.verify.final))].k}\n`;
   t += "\nButir (jawaban pengguna → jawaban akhir):\n";
-  items.forEach((it, i) => { t += `${i + 1}. [${DOMS[it[0]].k}] ${it[1]}\n   ${s.answers[i] ? "Ya" : "Tidak"} → ${s.verify ? (s.verify.final[i] ? "Ya" : "Tidak") : "belum diverifikasi"}\n`; });
+  items.forEach((it, i) => { t += `${i + 1}. [${DOMS[it[0]].k}] ${it[1]}\n   ${s.answers[i] ? "Ya" : "Tidak"} → ${s.verify ? (s.verify.final[i] ? "Ya" : "Tidak") + (nobsOf(s).includes(i) ? " (tidak teramati)" : "") : "belum diverifikasi"}\n`; const sp = followSpec(it); if (sp && s.answers[i] === true && followDone(sp, followOf(s, i))) t += `   Lanjutan: ${followText(sp, followOf(s, i))}${data.role === "dokter" && followConflict(sp, followOf(s, i)) ? " [tidak konsisten dengan Ya]" : ""}\n`; });
   if (s.verify && s.verify.note) t += `\nCatatan dokter: ${s.verify.note}\n`;
   if (s.verify) t += "\nSaran:\n" + advice(s).map(x => "- " + x).join("\n") + "\n";
   return t + "\n" + NOT_DIAGNOSIS;
@@ -456,7 +549,7 @@ function viewReport(c, s) {
   }).join("");
   const rows = items.map((it, i) => {
     const corr = v && v.final[i] !== s.answers[i];
-    return `<tr class="${corr ? "corr" : ""}"><td>${i + 1}</td><td>${esc(it[1])}<div class="small muted">${DOMS[it[0]].k}</div></td><td>${s.answers[i] ? "Ya" : "Tidak"}</td><td>${v ? (v.final[i] ? "Ya" : "Tidak") + (corr ? " *" : "") : "–"}</td></tr>`;
+    return `<tr class="${corr ? "corr" : ""}"><td>${i + 1}</td><td class="pre">${esc(it[1])}<div class="small muted">${DOMS[it[0]].k}</div>${followView(s, i)}</td><td>${s.answers[i] ? "Ya" : "Tidak"}</td><td>${v ? (v.final[i] ? "Ya" : "Tidak") + (nobsOf(s).includes(i) ? " (tidak teramati)" : "") + (corr ? " *" : "") : "–"}</td></tr>`;
   }).join("");
   return `<div class="stack">
     <div class="noprint row" style="margin-top:0"><button class="btn sm" data-act="closereport">← Kembali ke riwayat</button></div>
@@ -476,7 +569,7 @@ function viewReport(c, s) {
       <h2 class="h2" style="margin-top:18px">Jawaban per butir</h2>
       <div class="scroll"><table class="rt"><thead><tr><th>No</th><th>Butir</th><th>Pengguna</th><th>Akhir</th></tr></thead><tbody>${rows}</tbody></table></div>
       ${v && corrections(s) ? `<p class="small muted">* dikoreksi dokter</p>` : ""}
-      ${KPSP_DRAFT ? `<p class="foot">Teks butir pada prototype ini masih draf dan belum identik dengan Buku Bagan SDIDTK.</p>` : ""}
+      <p class="foot">${KPSP_DRAFT ? "Teks butir pada prototype ini masih draf dan belum identik dengan Buku Bagan SDIDTK." : "Teks butir, urutan, dan domain sesuai " + esc(KPSP_SOURCE) + "."}</p>
     </div>
     <div class="row noprint">
       <button class="btn pri" data-act="print">Cetak / simpan PDF</button>
@@ -491,7 +584,8 @@ function exportJSON(c) {
     child: { code: c.code, birthDate: c.dob, premature: c.prem, consent: c.consent },
     screenings: c.sessions.filter(s => s.status !== "draft").map(s => ({
       instrument: "KPSP", formAgeMonths: s.form, date: s.at, ageAtScreening: s.age, filledBy: s.by, status: s.status,
-      items: KPSP[s.form].map((it, i) => ({ no: i + 1, domain: it[0], userAnswer: s.answers[i], finalAnswer: s.verify ? s.verify.final[i] : null })),
+      items: KPSP[s.form].map((it, i) => { const sp = followSpec(it), fv = followOf(s, i); return { no: i + 1, domain: it[0], userAnswer: s.answers[i], followUp: sp && s.answers[i] === true && followDone(sp, fv) ? followText(sp, fv) : null, finalAnswer: s.verify ? s.verify.final[i] : null, notObserved: nobsOf(s).includes(i) }; }),
+      rerecordRequested: !!s.rerecord,
       yesCount: s.verify ? yesCount(s.verify.final) : null,
       category: s.verify ? CATS[category(yesCount(s.verify.final))].k : null,
       verifiedAt: s.verify ? new Date(s.verify.at).toISOString() : null
@@ -533,43 +627,60 @@ function viewAntrean() {
     </div>
     <h2 class="h2" style="margin:6px 0 -4px">Antrean verifikasi</h2>
     ${q.length ? q.map(({ c, s }) => {
-      const cl = clipsOf(s);
+      const cl = clipsOf(s), wait = rrWaiting(s), rr = s.rerecord;
+      const rrTag = !rr ? "" : wait ? `<span class="pill warn">Rekam ulang diminta · batas ${fmtTime(rr.due)}</span>`
+        : rr.resubmittedAt ? `<span class="pill ok">Video rekam ulang diterima</span>` : `<span class="pill bad">Batas rekam ulang lewat</span>`;
       return `<article class="card qrow">
         ${cl.length ? thumb(s, cl[0]) : `<span class="thumb none" aria-hidden="true">Tanpa video</span>`}
         <div class="qmain"><p>${sessionMeta(c, s)}</p>
-          <p class="small muted">Dikirim ${fmtTime(s.submittedAt)} · menunggu ${fmtDur(now - s.submittedAt)} · ${cl.length ? cl.length + " klip video" : "tanpa video"}</p></div>
+          <p class="small muted">Dikirim ${fmtTime(s.submittedAt)} · menunggu ${fmtDur(now - s.submittedAt)} · ${cl.length ? cl.length + " klip video" : "tanpa video"}</p>${rrTag}</div>
         <div class="row" style="margin-top:0">
           ${cl.length ? `<button class="btn sm" data-act="vopen" data-s="${s.id}" data-back="antrean">Lihat video</button>` : ""}
-          <button class="btn pri sm" data-act="review" data-s="${s.id}">Tinjau</button>
+          ${wait ? `<button class="btn sm" disabled title="Dapat ditinjau setelah video ulang diterima atau batas waktu lewat">Menunggu rekaman ulang</button>` : `<button class="btn pri sm" data-act="review" data-s="${s.id}">Tinjau</button>`}
         </div>
       </article>`;
     }).join("") : `<div class="card empty"><p class="muted">Tidak ada checklist yang menunggu verifikasi.</p></div>`}
   </div>`;
 }
 function vdPreview(items) {
+  if (ui.vd.rr.length) return `Kategori belum dapat ditetapkan: <b>${ui.vd.rr.length} butir menunggu rekam ulang</b>.`;
   const y = yesCount(ui.vd.final), cat = CATS[category(y)];
   return `Jawaban akhir: <b>${y}/${items.length} Ya</b> → <b>${cat.k}</b> · ${ui.vd.final.filter((v, i) => v !== ui.vd.user[i]).length} butir dikoreksi`;
 }
-function finalSeg(i, final) {
-  return `<div class="seg" role="group" aria-label="Jawaban akhir butir ${i + 1}"><button data-act="vset" data-i="${i}" data-v="y" aria-pressed="${final === true}">Ya</button><button data-act="vset" data-i="${i}" data-v="n" aria-pressed="${final === false}">Tidak</button></div>`;
+function finalSeg(i, final, off) {
+  const d = off ? " disabled" : "";
+  return `<div class="seg" role="group" aria-label="Jawaban akhir butir ${i + 1}"><button data-act="vset" data-i="${i}" data-v="y" aria-pressed="${final === true}"${d}>Ya</button><button data-act="vset" data-i="${i}" data-v="n" aria-pressed="${final === false}"${d}>Tidak</button></div>`;
 }
 function viewVerify(c, s) {
-  const items = KPSP[s.form], vd = ui.vd, cl = clipsOf(s);
+  const items = KPSP[s.form], vd = ui.vd, cl = clipsOf(s), rr = s.rerecord, rrMode = vd.rr.length > 0;
+  /* Butir video: sebelum rekam ulang dipakai, dokter dapat meminta rekam ulang (status proses).
+     Setelah itu, butir yang tetap tidak teramati ditetapkan "Tidak" dengan catatan "tidak teramati". */
+  const clipCtl = i => {
+    if (!cl.includes(i)) return "";
+    if (!rr) return `<label class="chk small rrchk"><input type="checkbox" data-act="vrr" data-i="${i}" ${vd.rr.includes(i) ? "checked" : ""}> Tidak teramati di video: minta rekam ulang</label>`;
+    return `${rr.items.includes(i) ? `<span class="pill">${rr.resubmittedAt ? "sudah direkam ulang" : "rekam ulang tidak dikirim"}</span>` : ""}
+      <label class="chk small rrchk"><input type="checkbox" data-act="vnobs" data-i="${i}" ${vd.nobs.includes(i) ? "checked" : ""}> Tetap tidak teramati: tetapkan “Tidak”</label>`;
+  };
   const rows = items.map((it, i) => `<article class="item vrow2 ${vd.final[i] !== s.answers[i] ? "corr" : ""}" data-vrow="${i}">
       ${itemHead(it, i)}
-      <p>${esc(it[1])}</p>
+      <p class="q">${esc(it[1])}</p>
+      ${itemFig(it)}
       <div class="vans"><span class="small">Pengguna: <b>${s.answers[i] ? "Ya" : "Tidak"}</b></span>
         <span class="small">Jawaban akhir:</span>
-        ${finalSeg(i, vd.final[i])}
+        ${vd.rr.includes(i) ? `<span class="pill warn">menunggu rekam ulang</span>` : finalSeg(i, vd.final[i], vd.nobs.includes(i))}
         <span class="small corr-lbl">dikoreksi</span>
+        ${vd.nobs.includes(i) ? `<span class="pill">tidak teramati</span>` : ""}
         ${cl.includes(i) ? `<button class="linkbtn small" data-act="vopen" data-s="${s.id}" data-i="${i}" data-back="verify">Lihat video butir ${i + 1}</button>` : ""}
       </div>
+      ${followView(s, i)}
+      ${clipCtl(i)}
     </article>`).join("");
   return `<div class="stack">
     <div class="row" style="margin-top:0"><button class="btn sm" data-act="closereview">← Kembali ke dasbor</button></div>
     <div><h1 class="title">Verifikasi checklist</h1><p class="muted">${sessionMeta(c, s)} · umur ${ageText(s.age)} · dikirim ${fmtTime(s.submittedAt)}</p></div>
     ${draftBanner()}
     <section class="card"><h2 class="h2">Video dari pengguna</h2>
+      ${rr ? `<p class="note info small" style="margin-bottom:12px">Rekam ulang sudah diminta sekali (${fmtTime(rr.at)}) untuk butir ${rr.items.map(i => i + 1).join(", ")}. ${rr.resubmittedAt ? `Video ulang diterima ${fmtTime(rr.resubmittedAt)}.` : "Video ulang tidak dikirim sampai batas waktu."} Butir yang tetap tidak teramati ditetapkan “Tidak” dengan catatan “tidak teramati”.</p>` : ""}
       ${cl.length ? `<div class="strip">${cl.map(i => `<button class="clipbtn" data-act="vopen" data-s="${s.id}" data-i="${i}" data-back="verify">${thumb(s, i, true)}<span class="small">Butir ${i + 1}</span></button>`).join("")}</div>
         <div class="row"><button class="btn sm" data-act="vopen" data-s="${s.id}" data-back="verify">Buka halaman video (${cl.length} klip)</button></div>
         <fieldset class="fs-radio"><legend>Apakah video dapat dinilai?</legend>
@@ -579,15 +690,16 @@ function viewVerify(c, s) {
         : `<p class="muted small">${c.consent.video ? "Pengguna mengirim tanpa video." : "Orang tua tidak menyetujui perekaman video."} Telaah berdasarkan jawaban pengguna.</p>`}
     </section>
     <section class="card"><h2 class="h2">Jawaban per butir</h2>
-      <p class="small muted" style="margin-bottom:6px">Jawaban akhir terisi sama dengan jawaban pengguna. Ubah bila video atau telaah menunjukkan jawaban berbeda. Butir kebiasaan ditelaah dari jawaban pengguna dan dapat dikonfirmasi saat kunjungan.</p>
+      <p class="small muted" style="margin-bottom:6px">Jawaban akhir hanya “Ya” atau “Tidak”, sesuai KPSP. Jawaban terisi sama dengan jawaban pengguna; ubah bila video atau telaah menunjukkan jawaban berbeda. Untuk butir yang ditanyakan kepada orang tua, nilailah isi pertanyaan lanjutannya, bukan hanya kata “Ya”.${rr ? "" : " Bila butir tidak teramati di video, minta rekam ulang alih-alih langsung menetapkan “Tidak”."}</p>
       ${rows}
     </section>
     <section class="card">
       <p class="note info" id="vprev">${vdPreview(items)}</p>
       ${ui.err ? `<p class="err" role="alert" style="margin-top:10px">${esc(ui.err)}</p>` : ""}
       <div class="field" style="margin-top:14px"><label for="dn">Nama dokter pemverifikasi</label><input id="dn" type="text" maxlength="60" value="${esc(vd.doctor)}" data-in="doctor" autocomplete="off"></div>
-      <div class="field"><label for="vn">Catatan untuk orang tua (opsional, bahasa sederhana)</label><textarea id="vn" maxlength="600" data-in="note">${esc(vd.note)}</textarea></div>
-      <button class="btn pri" data-act="verify">Tetapkan hasil akhir</button>
+      ${rrMode ? `<p class="note warn small">Anda meminta rekam ulang untuk ${vd.rr.length} butir. Hasil belum ditetapkan dan skrining tetap berstatus “menunggu verifikasi”. Orang tua punya waktu ${RR_DAYS} hari, dan permintaan ini hanya dapat dilakukan sekali.</p>` : ""}
+      <div class="field" style="margin-top:12px"><label for="vn">${rrMode ? "Petunjuk rekam ulang untuk orang tua" : "Catatan untuk orang tua (opsional, bahasa sederhana)"}</label><textarea id="vn" maxlength="600" data-in="note">${esc(vd.note)}</textarea></div>
+      ${rrMode ? `<button class="btn pri" data-act="askrr">Kirim permintaan rekam ulang</button>` : `<button class="btn pri" data-act="verify">Tetapkan hasil akhir</button>`}
     </section>
   </div>`;
 }
@@ -630,8 +742,9 @@ function viewVideos() {
         <section class="card">
           ${itemHead(it, i)}
           <p class="q">${esc(it[1])}</p>
+          ${itemFig(it)}
           <div class="vans">${ans(s.answers[i], "Pengguna")}${editable
-            ? `<span class="small">Jawaban akhir:</span>${finalSeg(i, fin)}${fin !== s.answers[i] ? `<span class="corr-lbl" style="display:inline-block">dikoreksi</span>` : ""}`
+            ? `<span class="small">Jawaban akhir:</span>${ui.vd.rr.includes(i) ? `<span class="pill warn">menunggu rekam ulang</span>` : finalSeg(i, fin, ui.vd.nobs.includes(i))}${fin !== s.answers[i] && !ui.vd.rr.includes(i) ? `<span class="corr-lbl" style="display:inline-block">dikoreksi</span>` : ""}`
             : ans(fin, "Akhir")}</div>
           <div class="row">
             <button class="btn sm" data-act="vclip" data-i="${cl[pos - 1]}" ${pos > 0 ? "" : "disabled"}>← Klip sebelumnya</button>
@@ -644,10 +757,10 @@ function viewVideos() {
         <h2 class="h2">Klip per butir</h2>
         ${cl.map(k => `<button class="clip" data-act="vclip" data-i="${k}" aria-current="${k === i}">
             ${thumb(s, k, true)}
-            <span class="clip-t"><span><b>Butir ${k + 1}</b> · ${DOMS[items[k][0]].k}</span><span class="small muted">${esc(items[k][1])}</span>
-            <span class="small">${s.answers[k] ? "Ya" : "Tidak"}${finalOf(k) !== null && finalOf(k) !== s.answers[k] ? ` → ${finalOf(k) ? "Ya" : "Tidak"} (dikoreksi)` : ""}</span></span>
+            <span class="clip-t"><span><b>Butir ${k + 1}</b> · ${DOMS[items[k][0]].k}</span><span class="small muted">${esc(itemShort(items[k]))}</span>
+            <span class="small">${s.answers[k] ? "Ya" : "Tidak"}${finalOf(k) !== null && finalOf(k) !== s.answers[k] ? ` → ${finalOf(k) ? "Ya" : "Tidak"} (dikoreksi)` : ""}${s.rerecord && s.rerecord.items.includes(k) ? ` · ${s.rerecord.resubmittedAt ? "rekaman ulang" : "rekam ulang diminta"}` : ""}${nobsOf(s).includes(k) ? " · tidak teramati" : ""}</span></span>
           </button>`).join("")}
-        ${habit.length ? `<p class="small muted" style="margin-top:10px">Tidak direkam (kebiasaan): butir ${habit.map(k => k + 1).join(", ")}.</p>` : ""}
+        ${habit.length ? `<p class="small muted" style="margin-top:10px">Tidak direkam (ditanyakan kepada orang tua): butir ${habit.map(k => k + 1).join(", ")}.</p>` : ""}
       </aside>
     </div>
   </div>`;
@@ -694,6 +807,10 @@ function viewIndikator() {
     cp.push([category(yesCount(s.answers)), category(yesCount(s.verify.final))]);
   });
   const ki = kappa(ip, ["Y", "T"]), kc = kappa(cp, ["S", "M", "P"]);
+  const rrs = done.filter(s => s.rerecord), rrSent = rrs.filter(s => s.rerecord.resubmittedAt && s.rerecord.resubmittedAt <= s.rerecord.due);
+  const nNobs = ver.reduce((a, s) => a + nobsOf(s).length, 0);
+  let nFollow = 0, nConflict = 0;
+  done.forEach(s => KPSP[s.form].forEach((it, i) => { const sp = followSpec(it); if (sp && s.answers[i] === true) { nFollow++; if (followConflict(sp, followOf(s, i))) nConflict++; } }));
   const krow = (lbl, k) => `<tr><td>${lbl}</td><td>${k ? `κ = ${k.k === null ? "–" : dec(k.k)} · kesepakatan ${pct(k.po * k.n, k.n)} · n = ${k.n}<div class="small muted">${landisKoch(k.k)}</div>` : "–"}</td></tr>`;
   return `<div class="stack">
     <div><h1 class="title">Indikator feasibility</h1><p class="muted">Dihitung dari data di perangkat ini untuk uji feasibility alur verifikasi (Subbab 3.4). Gunakan data dummy saat uji fungsionalitas.</p></div>
@@ -704,6 +821,10 @@ function viewIndikator() {
       <tr><td>Checklist terverifikasi</td><td>${ver.length}/${done.length} (${pct(ver.length, done.length)})</td></tr>
       <tr><td>Median waktu unggah hingga verifikasi</td><td>${md === null ? "–" : fmtDur(md)}</td></tr>
       <tr><td>Butir yang dikoreksi dokter</td><td>${nCorr}/${nItems} (${pct(nCorr, nItems)})</td></tr>
+      <tr><td>Checklist dengan permintaan rekam ulang</td><td>${rrs.length}/${withVid.length} checklist dengan video (${pct(rrs.length, withVid.length)})</td></tr>
+      <tr><td>Rekam ulang dikirim dalam ${RR_DAYS} hari</td><td>${rrSent.length}/${rrs.length} (${pct(rrSent.length, rrs.length)})</td></tr>
+      <tr><td>Butir dinilai “Tidak” karena tetap tidak teramati</td><td>${nNobs}/${nItems} (${pct(nNobs, nItems)})</td></tr>
+      <tr><td>Pertanyaan lanjutan yang tidak konsisten dengan “Ya”</td><td>${nConflict}/${nFollow} (${pct(nConflict, nFollow)})</td></tr>
       ${krow("Cohen's kappa pengguna–dokter, per butir", ki)}
       ${krow("Cohen's kappa pengguna–dokter, per kategori hasil", kc)}
     </tbody></table></div>
@@ -716,15 +837,23 @@ function isoAgo(months, days) { const t = new Date(); t.setMonth(t.getMonth() - 
 function loadDemo() {
   const now = Date.now(), consent = { wali: "Orang tua contoh", rel: "Ibu", at: todayISO(), data: true, video: true, guru: true };
   const mk = (name, dob) => ({ id: "c" + Math.random().toString(36).slice(2, 9), code: newCode(), name, dob, prem: false, consent: { ...consent }, demo: true, sessions: [] });
-  const a = mk("Contoh Rara", isoAgo(26, 5)), b = mk("Contoh Bima", isoAgo(10, 20));
+  const a = mk("Contoh Rara", isoAgo(26, 5)), b = mk("Contoh Bima", isoAgo(10, 20)), d = mk("Contoh Sinta", isoAgo(19, 5));
   const sa = { id: "s" + now, at: isoAgo(0, 3), form: 24, age: ageParts(a.dob, isoAgo(0, 3)), by: "ortu", step: "video", video: true,
-    answers: [true, true, false, false, true, true, true, true, true, false], status: "terverifikasi", submittedAt: now - 3 * 864e5 };
+    answers: [true, true, false, false, true, true, true, true, true, false], status: "terverifikasi", submittedAt: now - 3 * 864e5,
+    follow: { 4: "celana dan kaos", 5: 0, 6: 0, 7: 1 } };
   sa.verify = { final: [true, true, false, false, true, true, true, false, true, false], note: "Latih kosakata dan kemampuan menunjuk bagian tubuh setiap hari.", videoOk: true, doctor: "dr. Contoh, Sp.A", at: now - 2 * 864e5 };
   const f = formFor(ageParts(b.dob, todayISO()).rounded);
   const sb = { id: "s" + (now + 1), at: todayISO(), form: f, age: ageParts(b.dob, todayISO()), by: "guru", step: "video", video: true,
-    answers: KPSP[f].map((_, i) => i !== 3), status: "menunggu", submittedAt: now - 36e5, verify: null };
-  a.sessions.push(sa); b.sessions.push(sb);
-  data.children.push(a, b); data.active = a.id;
+    answers: KPSP[f].map((_, i) => i !== 3), status: "menunggu", submittedAt: now - 36e5, verify: null,
+    follow: { 4: 0, 5: "ma-ma", 6: 0, 7: 0 } };
+  /* Sinta: rekam ulang diminta 9 hari lalu dan tidak dikirim sampai batas waktu. */
+  const fd = formFor(ageParts(d.dob, todayISO()).rounded), ad = KPSP[fd].map((_, i) => i !== 8);
+  const sd = { id: "s" + (now + 2), at: isoAgo(0, 10), form: fd, age: ageParts(d.dob, isoAgo(0, 10)), by: "ortu", step: "video", video: true,
+    answers: ad, status: "menunggu", submittedAt: now - 10 * DAY, verify: null,
+    follow: { 1: [{ w: "mamam", a: "makan" }, { w: "cucu", a: "susu" }, { w: "bola", a: "bola" }], 2: 3, 3: 0, 4: "menyapu dengan sapu kecil" },
+    rerecord: { items: [7], note: "Rekam anak berjalan di sepanjang ruangan dengan seluruh tubuh terlihat.", doctor: "dr. Contoh, Sp.A", at: now - 9 * DAY, due: now - 2 * DAY, resubmittedAt: null, final: ad.slice() } };
+  a.sessions.push(sa); b.sessions.push(sb); d.sessions.push(sd);
+  data.children.push(a, b, d); data.active = a.id;
 }
 
 /* ---------- render ---------- */
@@ -761,11 +890,29 @@ function setField(el) {
   if (!ui.draft) return;
   ui.draft[k] = el.type === "checkbox" ? el.checked : el.value;
 }
-app.addEventListener("input", e => setField(e.target));
+function setFollow(el) {
+  const c = child(), dr = c && draftOf(c); if (!dr) return false;
+  dr.follow = dr.follow || {};
+  if (el.dataset.ft !== undefined) dr.follow[+el.dataset.ft] = el.value;
+  else if (el.dataset.fw) {
+    const [i, r, k] = el.dataset.fw.split(":"), sp = followSpec(KPSP[dr.form][+i]);
+    const rows = Array.isArray(dr.follow[i]) ? dr.follow[i] : Array.from({ length: sp.n }, () => ({ w: "", a: "" }));
+    rows[+r] = rows[+r] || { w: "", a: "" }; rows[+r][k] = el.value; dr.follow[i] = rows;
+  } else return false;
+  save(); refreshNext(dr); return true;
+}
+app.addEventListener("input", e => { if (!setFollow(e.target)) setField(e.target); });
 app.addEventListener("change", e => {
   const t = e.target, act = t.dataset.act;
   if (act === "switch") { data.active = t.value; resetView(); save(); return render(); }
   if (act === "role") { data.role = t.value; ui.tab = null; resetView(); save(); return render(); }
+  if ((act === "vrr" || act === "vnobs") && ui.vd) {
+    const i = +t.dataset.i, key = act === "vrr" ? "rr" : "nobs";
+    ui.vd[key] = t.checked ? [...new Set([...ui.vd[key], i])].sort((a, b) => a - b) : ui.vd[key].filter(x => x !== i);
+    if (act === "vnobs" && t.checked) ui.vd.final[i] = false;
+    ui.err = ""; return render();
+  }
+  if (t.dataset.ft !== undefined || t.dataset.fw) return;
   setField(t);
   if (t.dataset.in === "cVideo" && ui.editConsent) render();
 });
@@ -832,9 +979,17 @@ app.addEventListener("click", e => {
     const b = app.querySelector(`[data-act="ans"][data-i="${i}"][data-v="${el.dataset.v}"]`); if (b) b.focus({ preventScroll: true });
     return;
   }
+  else if (act === "fchoice" && c) {
+    const dr = draftOf(c), i = +el.dataset.i;
+    if (dr) { dr.follow = dr.follow || {}; dr.follow[i] = +el.dataset.o; save(); }
+  }
+  else if (act === "resubmit") {
+    const x = findSession(el.dataset.s);
+    if (x && rrWaiting(x.s)) { x.s.rerecord.resubmittedAt = Date.now(); save(); }
+  }
   else if (act === "canceldraft") ui.confirm = "canceldraft";
   else if (act === "canceldraftyes" && c) { const dr = draftOf(c); if (dr) { c.sessions = c.sessions.filter(s => s !== dr); save(); } ui.confirm = null; }
-  else if (act === "tovideo" && c) { const dr = draftOf(c); if (dr && dr.answers.every(x => x !== null)) { dr.step = "video"; save(); window.scrollTo(0, 0); } }
+  else if (act === "tovideo" && c) { const dr = draftOf(c); if (dr && canNext(dr)) { dr.step = "video"; save(); window.scrollTo(0, 0); } }
   else if (act === "toisi" && c) { const dr = draftOf(c); if (dr) { dr.step = "isi"; save(); } }
   else if (act === "submit" && c) {
     const dr = draftOf(c);
@@ -852,19 +1007,34 @@ app.addEventListener("click", e => {
   else if (act === "export" && c) exportJSON(c);
   else if (act === "review") {
     const x = findSession(el.dataset.s);
-    if (x) ui.vd = { sid: x.s.id, user: x.s.answers.slice(), final: x.s.answers.slice(), note: "", videoOk: null, doctor: data.doctorName || "" };
+    /* Setelah rekam ulang, mulai dari keputusan sementara dokter sebelumnya. */
+    if (x && !rrWaiting(x.s)) ui.vd = { sid: x.s.id, user: x.s.answers.slice(), final: ((x.s.rerecord && x.s.rerecord.final) || x.s.answers).slice(), note: "", videoOk: null, doctor: data.doctorName || "", rr: [], nobs: [] };
     window.scrollTo(0, 0);
   }
   else if (act === "closereview") ui.vd = null;
   else if (act === "verify" && ui.vd) {
     const x = findSession(ui.vd.sid);
     if (!x || x.s.status !== "menunggu") ui.vd = null;
+    else if (ui.vd.rr.length) ui.err = "Ada butir yang menunggu rekam ulang. Kirim permintaan rekam ulang atau batalkan centangnya.";
     else if (hasVideo(x.s) && ui.vd.videoOk === null) ui.err = "Tandai apakah video dapat dinilai.";
     else if (!ui.vd.doctor.trim()) ui.err = "Isi nama dokter pemverifikasi.";
     else {
       data.doctorName = ui.vd.doctor.trim();
-      x.s.verify = { final: ui.vd.final.slice(), note: ui.vd.note.trim(), videoOk: hasVideo(x.s) ? ui.vd.videoOk : null, doctor: data.doctorName, at: Date.now() };
+      x.s.verify = { final: ui.vd.final.slice(), note: ui.vd.note.trim(), videoOk: hasVideo(x.s) ? ui.vd.videoOk : null, doctor: data.doctorName, at: Date.now(),
+        notObserved: ui.vd.nobs.filter(i => ui.vd.final[i] === false) };
       x.s.status = "terverifikasi"; ui.vd = null; save(); window.scrollTo(0, 0);
+    }
+  }
+  /* Rekam ulang: status proses, hanya sekali, batas 7 hari. Skrining tetap "menunggu verifikasi". */
+  else if (act === "askrr" && ui.vd) {
+    const x = findSession(ui.vd.sid);
+    if (!x || x.s.status !== "menunggu" || x.s.rerecord) ui.vd = null;
+    else if (!ui.vd.doctor.trim()) ui.err = "Isi nama dokter pemverifikasi.";
+    else {
+      const now = Date.now();
+      data.doctorName = ui.vd.doctor.trim();
+      x.s.rerecord = { items: ui.vd.rr.slice(), note: ui.vd.note.trim(), doctor: data.doctorName, at: now, due: now + RR_DAYS * DAY, resubmittedAt: null, final: ui.vd.final.slice() };
+      ui.vd = null; save(); window.scrollTo(0, 0);
     }
   }
   else if (act === "vopen") {
