@@ -79,7 +79,7 @@ button{cursor:pointer}
 .grid2{display:grid;gap:16px;grid-template-columns:1fr}
 @media (min-width:760px){.grid2{grid-template-columns:minmax(0,320px) 1fr}}
 label{display:block;font-weight:600;margin-bottom:6px}
-input[type=text],input[type=date],select.f,textarea{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:11px 12px}
+input[type=text],input[type=password],input[type=date],select.f,textarea{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:11px 12px}
 .field{margin-bottom:14px}
 .err{color:var(--d1);font-weight:600;margin-bottom:10px}
  
@@ -201,6 +201,7 @@ details.guide .kv{margin-top:10px}
 @keyframes prog{to{width:100%}}
 video.vreal{display:block;width:100%;aspect-ratio:16/9;border-radius:18px;background:#0d0b14}
 label.btn{display:inline-block;cursor:pointer}
+.who{display:grid;line-height:1.2;text-align:right}
 label.btn.disabled{opacity:.5;cursor:not-allowed}
 label.btn input[type=file]{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 .vlist{list-style:none;margin:0;padding:0;display:grid;gap:6px;width:100%;text-align:left}

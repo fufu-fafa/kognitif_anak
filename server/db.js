@@ -40,14 +40,32 @@ db.exec(`
     created_at INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS videos_session ON videos(session_id);
+  CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    login TEXT NOT NULL UNIQUE,
+    role TEXT NOT NULL CHECK (role IN ('ortu', 'dokter')),
+    name TEXT NOT NULL,
+    pass TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS auth_sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at INTEGER NOT NULL
+  );
 `);
+/* Pemilik anak (akun orang tua). Kolom ditambahkan untuk database yang dibuat sebelum ada login. */
+if (!db.prepare("PRAGMA table_info(children)").all().some(c => c.name === "owner_id")) {
+  db.exec("ALTER TABLE children ADD COLUMN owner_id TEXT REFERENCES users(id) ON DELETE CASCADE");
+}
+db.exec("CREATE INDEX IF NOT EXISTS children_owner ON children(owner_id)");
 
 const q = {
-  children: db.prepare("SELECT id, doc, rev FROM children ORDER BY created_at"),
+  children: db.prepare("SELECT id, doc, rev, owner_id FROM children ORDER BY created_at"),
   sessions: db.prepare("SELECT id, child_id, doc, rev FROM sessions ORDER BY created_at"),
   videos: db.prepare("SELECT id, session_id, name, mime, size, created_at FROM videos ORDER BY created_at"),
-  child: db.prepare("SELECT id, doc, rev FROM children WHERE id = ?"),
-  insChild: db.prepare("INSERT INTO children (id, doc, rev, created_at, updated_at) VALUES (?, ?, 1, ?, ?)"),
+  child: db.prepare("SELECT id, doc, rev, owner_id FROM children WHERE id = ?"),
+  insChild: db.prepare("INSERT INTO children (id, doc, rev, owner_id, created_at, updated_at) VALUES (?, ?, 1, ?, ?, ?)"),
   updChild: db.prepare("UPDATE children SET doc = ?, rev = rev + 1, updated_at = ? WHERE id = ?"),
   delChild: db.prepare("DELETE FROM children WHERE id = ?"),
   session: db.prepare("SELECT id, child_id, status, doc, rev FROM sessions WHERE id = ?"),
@@ -58,24 +76,41 @@ const q = {
   videosOfSession: db.prepare("SELECT id FROM videos WHERE session_id = ?"),
   videosOfChild: db.prepare("SELECT v.id FROM videos v JOIN sessions s ON s.id = v.session_id WHERE s.child_id = ?"),
   insVideo: db.prepare("INSERT INTO videos (id, session_id, name, mime, size, created_at) VALUES (?, ?, ?, ?, ?, ?)"),
-  delVideo: db.prepare("DELETE FROM videos WHERE id = ?")
+  delVideo: db.prepare("DELETE FROM videos WHERE id = ?"),
+  userByLogin: db.prepare("SELECT id, login, role, name, pass FROM users WHERE login = ?"),
+  insUser: db.prepare("INSERT INTO users (id, login, role, name, pass, created_at) VALUES (?, ?, ?, ?, ?, ?)"),
+  setPass: db.prepare("UPDATE users SET pass = ? WHERE id = ?"),
+  insAuth: db.prepare("INSERT INTO auth_sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)"),
+  authUser: db.prepare("SELECT u.id, u.login, u.role, u.name FROM auth_sessions a JOIN users u ON u.id = a.user_id WHERE a.token_hash = ? AND a.expires_at > ?"),
+  delAuth: db.prepare("DELETE FROM auth_sessions WHERE token_hash = ?"),
+  delAuthOfUser: db.prepare("DELETE FROM auth_sessions WHERE user_id = ?"),
+  purgeAuth: db.prepare("DELETE FROM auth_sessions WHERE expires_at <= ?")
 };
 
+/* Transaksi boleh bersarang; hanya yang terluar yang membuka dan menutup transaksi SQLite. */
+let depth = 0;
 function tx(fn) {
-  db.exec("BEGIN IMMEDIATE");
-  try { const r = fn(); db.exec("COMMIT"); return r; } catch (e) { db.exec("ROLLBACK"); throw e; }
+  if (depth) { depth++; try { return fn(); } finally { depth--; } }
+  db.exec("BEGIN IMMEDIATE"); depth = 1;
+  try { const r = fn(); db.exec("COMMIT"); return r; } catch (e) { db.exec("ROLLBACK"); throw e; } finally { depth = 0; }
 }
 
 const videoPath = id => path.join(VIDEO_DIR, id);
 function unlinkVideos(ids) { ids.forEach(id => fs.rm(videoPath(id), { force: true }, () => {})); }
 
-/* Seluruh data dalam bentuk yang dipakai app.js: anak beserta sesinya, plus daftar video per sesi. */
-function state() {
-  const kids = q.children.all().map(r => ({ ...JSON.parse(r.doc), rev: r.rev, sessions: [] }));
+/* Data dalam bentuk yang dipakai app.js: anak beserta sesinya, plus daftar video per sesi.
+   Orang tua hanya menerima anaknya sendiri; dokter menerima semua anak tanpa nama anak dan nama wali. */
+function state(user) {
+  const kids = q.children.all().filter(r => user.role === "dokter" || r.owner_id === user.id).map(r => {
+    const doc = JSON.parse(r.doc);
+    if (user.role === "dokter") { doc.name = ""; if (doc.consent) doc.consent = { ...doc.consent, wali: "" }; }
+    return { ...doc, rev: r.rev, sessions: [] };
+  });
   const byId = new Map(kids.map(c => [c.id, c]));
   q.sessions.all().forEach(r => { const c = byId.get(r.child_id); if (c) c.sessions.push({ ...JSON.parse(r.doc), rev: r.rev }); });
   const videos = {};
-  q.videos.all().forEach(v => (videos[v.session_id] = videos[v.session_id] || []).push(publicVideo(v)));
+  const sids = new Set(kids.flatMap(c => c.sessions.map(s => s.id)));
+  q.videos.all().forEach(v => sids.has(v.session_id) && (videos[v.session_id] = videos[v.session_id] || []).push(publicVideo(v)));
   return { children: kids, videos };
 }
 const publicVideo = v => ({ id: v.id, name: v.name, mime: v.mime, size: v.size, at: v.created_at });
@@ -84,14 +119,15 @@ class Conflict extends Error { constructor(cur) { super("conflict"); this.curren
 class NotFound extends Error { constructor(what) { super(what + " tidak ditemukan"); } }
 
 /* rev = null berarti rekaman baru; selain itu harus sama dengan rev di server. */
-function putChild(id, doc, rev) {
+function putChild(id, doc, rev, ownerId) {
   return tx(() => {
     const cur = q.child.get(id), now = Date.now();
     if (!cur) {
       if (rev != null) throw new NotFound("Anak");
-      q.insChild.run(id, JSON.stringify(doc), now, now);
+      q.insChild.run(id, JSON.stringify(doc), ownerId, now, now);
       return 1;
     }
+    if (cur.owner_id !== ownerId) throw new NotFound("Anak");
     if (rev !== cur.rev) throw new Conflict({ ...JSON.parse(cur.doc), rev: cur.rev });
     q.updChild.run(JSON.stringify(doc), now, id);
     return cur.rev + 1;
@@ -104,10 +140,12 @@ function deleteChild(id) {
   return n > 0;
 }
 
-function putSession(id, childId, doc, rev) {
+/* allow(lama, baru) memeriksa hak pengguna atas perubahan; lama = null untuk sesi baru. */
+function putSession(id, childId, doc, rev, allow) {
   return tx(() => {
-    const cur = q.session.get(id), now = Date.now();
-    if (!q.child.get(childId)) throw new NotFound("Anak");
+    const cur = q.session.get(id), now = Date.now(), child = q.child.get(childId);
+    if (!child) throw new NotFound("Anak");
+    allow(child, cur ? JSON.parse(cur.doc) : null);
     if (!cur) {
       if (rev != null) throw new NotFound("Sesi");
       q.insSession.run(id, childId, doc.status, JSON.stringify(doc), now, now);
@@ -129,7 +167,16 @@ function deleteSession(id) {
 }
 
 const getSession = id => q.session.get(id);
-function getChild(id) { const r = q.child.get(id); return r ? JSON.parse(r.doc) : null; }
+function getChild(id) { const r = q.child.get(id); return r ? { ...JSON.parse(r.doc), owner_id: r.owner_id } : null; }
+const countOwned = ownerId => q.children.all().filter(r => r.owner_id === ownerId).length;
+
+/* ---------- akun dan sesi masuk ---------- */
+const userByLogin = login => q.userByLogin.get(login);
+function addUser(id, login, role, name, pass) { q.insUser.run(id, login, role, name, pass, Date.now()); }
+function setPassword(id, pass) { q.setPass.run(pass, id); q.delAuthOfUser.run(id); }
+function addAuth(hash, userId, expires) { q.purgeAuth.run(Date.now()); q.insAuth.run(hash, userId, expires); }
+const authUser = hash => q.authUser.get(hash, Date.now());
+const delAuth = hash => q.delAuth.run(hash);
 const getVideo = id => q.video.get(id);
 function addVideo(id, sessionId, name, mime, size) {
   const now = Date.now();
@@ -142,4 +189,4 @@ function deleteVideo(id) {
   return n > 0;
 }
 
-module.exports = { DATA_DIR, VIDEO_DIR, videoPath, state, getChild, putChild, deleteChild, putSession, deleteSession, getSession, getVideo, addVideo, deleteVideo, Conflict, NotFound };
+module.exports = { db, tx, DATA_DIR, VIDEO_DIR, videoPath, state, getChild, countOwned, userByLogin, addUser, setPassword, addAuth, authUser, delAuth, putChild, deleteChild, putSession, deleteSession, getSession, getVideo, addVideo, deleteVideo, Conflict, NotFound };

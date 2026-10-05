@@ -53,17 +53,19 @@ function loadLocal() {
   } catch (e) {}
   return null;
 }
-/* Peran, ukuran teks, anak aktif, dan nama dokter adalah pilihan per perangkat; data anak ada di server. */
+/* Ukuran teks dan anak aktif adalah pilihan per perangkat; peran berasal dari akun, data anak ada di server. */
 const PREF_KEY = "cognitrack:prefs";
 function loadPrefs() {
-  try { const p = JSON.parse(localStorage.getItem(PREF_KEY) || "null"); if (p) return p; } catch (e) {}
+  try { const p = JSON.parse(localStorage.getItem(PREF_KEY) || "null"); if (p) return { fs: p.fs ?? 1, active: p.active || null }; } catch (e) {}
   const l = loadLocal() || {};
-  return { role: l.role || "ortu", fs: l.fs ?? 1, doctorName: l.doctorName || "", active: l.active || null };
+  return { fs: l.fs ?? 1, active: l.active || null };
 }
-const data = { v: 2, ...loadPrefs(), children: [] };
+const data = { v: 2, role: "ortu", ...loadPrefs(), children: [] };
 let vids = {};
+/* Akun yang sedang masuk ({ id, login, role, name }); null = tampilkan halaman masuk. */
+let me = null, canRegister = true;
 function savePrefs() {
-  try { localStorage.setItem(PREF_KEY, JSON.stringify({ role: data.role, fs: data.fs, doctorName: data.doctorName, active: data.active })); } catch (e) {}
+  try { localStorage.setItem(PREF_KEY, JSON.stringify({ fs: data.fs, active: data.active })); } catch (e) {}
 }
 
 /* ---------- sinkronisasi dengan server ----------
@@ -91,7 +93,8 @@ async function req(method, url, body, rev) {
   try { r = await fetch(url, { method, headers: h, body }); }
   catch (e) { const x = new Error("Server tidak dapat dihubungi."); x.offline = true; throw x; }
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) { const x = new Error(j.error || "Gagal menyimpan (" + r.status + ")."); x.status = r.status; throw x; }
+  if (r.status === 401 && me && !url.startsWith("/api/auth/")) loggedOut("Sesi masuk berakhir. Silakan masuk lagi.");
+  if (!r.ok) { const x = new Error(j.error || "Gagal menyimpan (" + r.status + ")."); x.status = r.status; x.body = j; throw x; }
   return j;
 }
 function adopt(st) {
@@ -109,6 +112,7 @@ async function pull() { adopt(await req("GET", "/api/state")); }
 function save() { savePrefs(); clearTimeout(net.timer); net.timer = setTimeout(flush, 300); }
 async function flush() {
   clearTimeout(net.timer);
+  if (!me) return;
   if (net.busy) { net.again = true; return; }
   net.busy = true;
   const before = net.err;
@@ -141,11 +145,11 @@ async function flush() {
 }
 /* Ambil data terbaru saat kembali ke aplikasi, misalnya agar dokter melihat kiriman baru. */
 async function refresh() {
-  if (net.busy || dirty() || upload) return;
+  if (!me || net.busy || dirty() || upload) return;
   let st;
   try { st = await req("GET", "/api/state"); } catch (e) { return; }
   /* Jangan menimpa perubahan yang dibuat selama data diambil. */
-  if (net.busy || dirty() || upload) return;
+  if (!me || net.busy || dirty() || upload) return;
   const was = JSON.stringify([data.children, vids]);
   adopt(st);
   if (JSON.stringify([data.children, vids]) !== was) render();
@@ -251,7 +255,8 @@ function header() {
     </div>
     ${kidSel}${add}
     <div class="fs" role="group" aria-label="Ukuran teks"><button class="btn sm" data-act="fs" data-d="-1" aria-label="Perkecil teks">A−</button><button class="btn sm" data-act="fs" data-d="1" aria-label="Perbesar teks">A+</button></div>
-    <select class="sel" data-act="role" aria-label="Masuk sebagai">${Object.entries(ROLES).map(([k, v]) => `<option value="${k}" ${k === r ? "selected" : ""}>${v}</option>`).join("")}</select>
+    <span class="who small"><b>${esc(me.name)}</b><span class="muted">${ROLES[me.role]}</span></span>
+    <button class="btn sm" data-act="logout">Keluar</button>
   </header>`;
 }
 function tabs() {
@@ -838,7 +843,7 @@ function viewVerify(c, s) {
     <section class="card">
       <p class="note info" id="vprev">${vdPreview(items)}</p>
       ${ui.err ? `<p class="err" role="alert" style="margin-top:10px">${esc(ui.err)}</p>` : ""}
-      <div class="field" style="margin-top:14px"><label for="dn">Nama dokter pemverifikasi</label><input id="dn" type="text" maxlength="60" value="${esc(vd.doctor)}" data-in="doctor" autocomplete="off"></div>
+      <p class="small muted" style="margin-top:14px">Diverifikasi sebagai <b>${esc(vd.doctor)}</b>.</p>
       ${rrMode ? `<p class="note warn small">Anda meminta rekam ulang untuk ${vd.rr.length} butir. Hasil belum ditetapkan dan skrining tetap berstatus “menunggu verifikasi”. Orang tua punya waktu ${RR_DAYS} hari, dan permintaan ini hanya dapat dilakukan sekali.</p>` : ""}
       <div class="field" style="margin-top:12px"><label for="vn">${rrMode ? "Petunjuk rekam ulang untuk orang tua" : "Catatan untuk orang tua (opsional, bahasa sederhana)"}</label><textarea id="vn" maxlength="600" data-in="note">${esc(vd.note)}</textarea></div>
       ${rrMode ? `<button class="btn pri" data-act="askrr">Kirim permintaan rekam ulang</button>` : `<button class="btn pri" data-act="verify">Tetapkan hasil akhir</button>`}
@@ -1009,33 +1014,10 @@ function viewIndikator() {
   </div>`;
 }
 
-/* ---------- data contoh (dummy) ---------- */
-function isoAgo(months, days) { const t = new Date(); t.setMonth(t.getMonth() - months); t.setDate(t.getDate() - days); return isoOf(t); }
-function loadDemo() {
-  const now = Date.now(), consent = { wali: "Orang tua contoh", rel: "Ibu", at: todayISO(), data: true, video: true, guru: true };
-  const mk = (name, dob) => ({ id: uid("c"), code: newCode(), name, dob, prem: false, consent: { ...consent }, demo: true, sessions: [] });
-  const a = mk("Contoh Rara", isoAgo(26, 5)), b = mk("Contoh Bima", isoAgo(10, 20)), d = mk("Contoh Sinta", isoAgo(19, 5));
-  const sa = { id: uid("s"), at: isoAgo(0, 3), form: 24, age: ageParts(a.dob, isoAgo(0, 3)), by: "ortu", step: "video", video: true,
-    answers: [true, true, false, false, true, true, true, true, true, false], status: "terverifikasi", submittedAt: now - 3 * 864e5,
-    follow: { 4: "celana dan kaos", 5: 0, 6: 0, 7: 1 } };
-  sa.verify = { final: [true, true, false, false, true, true, true, false, true, false], note: "Latih kosakata dan kemampuan menunjuk bagian tubuh setiap hari.", videoOk: true, doctor: "dr. Contoh, Sp.A", at: now - 2 * 864e5 };
-  const f = formFor(ageParts(b.dob, todayISO()).rounded);
-  const sb = { id: uid("s"), at: todayISO(), form: f, age: ageParts(b.dob, todayISO()), by: "guru", step: "video", video: true,
-    answers: KPSP[f].map((_, i) => i !== 3), status: "menunggu", submittedAt: now - 36e5, verify: null,
-    follow: { 4: 0, 5: "ma-ma", 6: 0, 7: 0 } };
-  /* Sinta: rekam ulang diminta 9 hari lalu dan tidak dikirim sampai batas waktu. */
-  const fd = formFor(ageParts(d.dob, todayISO()).rounded), ad = KPSP[fd].map((_, i) => i !== 8);
-  const sd = { id: uid("s"), at: isoAgo(0, 10), form: fd, age: ageParts(d.dob, isoAgo(0, 10)), by: "ortu", step: "video", video: true,
-    answers: ad, status: "menunggu", submittedAt: now - 10 * DAY, verify: null,
-    follow: { 1: [{ w: "mamam", a: "makan" }, { w: "cucu", a: "susu" }, { w: "bola", a: "bola" }], 2: 3, 3: 0, 4: "menyapu dengan sapu kecil" },
-    rerecord: { items: [7], note: "Rekam anak berjalan di sepanjang ruangan dengan seluruh tubuh terlihat.", doctor: "dr. Contoh, Sp.A", at: now - 9 * DAY, due: now - 2 * DAY, resubmittedAt: null, final: ad.slice() } };
-  a.sessions.push(sa); b.sessions.push(sb); d.sessions.push(sd);
-  data.children.push(a, b, d); data.active = a.id;
-}
-
 /* ---------- render ---------- */
 const app = document.getElementById("app");
 function render() {
+  if (!me) return renderAuth();
   document.documentElement.style.fontSize = (FS[data.fs] ?? 1) * 100 + "%";
   if (!ui.tab || !TABS[data.role].some(t => t[0] === ui.tab)) ui.tab = TABS[data.role][0][0];
   let body;
@@ -1056,14 +1038,14 @@ function render() {
     }
   }
   app.innerHTML = header() + `<main>${net.err ? `<p class="note ${net.offline ? "warn" : "bad"} small" role="alert" style="margin-bottom:14px">${esc(net.err)}</p>` : ""}${body}</main>
-    <p class="foot noprint">Prototype Tahap 1 (MVP). Peran dapat diganti di kanan atas untuk demonstrasi. Data dan video tersimpan di server CogniTrack.</p>`;
+    <p class="foot noprint">Prototype Tahap 1 (MVP). Data dan video tersimpan di server CogniTrack.</p>`;
 }
 
 /* ---------- event ---------- */
 function setField(el) {
   const k = el.dataset.in; if (!k) return;
   if (k === "vok") { if (ui.vd) ui.vd.videoOk = el.value === "1"; return; }
-  if ((k === "doctor" || k === "note") && ui.vd) { ui.vd[k] = el.value; return; }
+  if (k === "note" && ui.vd) { ui.vd[k] = el.value; return; }
   if (!ui.draft) return;
   ui.draft[k] = el.type === "checkbox" ? el.checked : el.value;
 }
@@ -1083,7 +1065,6 @@ app.addEventListener("change", e => {
   const t = e.target, act = t.dataset.act;
   if (t.dataset.upload) { const files = [...t.files]; t.value = ""; return uploadVideos(t.dataset.upload, files); }
   if (act === "switch") { data.active = t.value; resetView(); save(); return render(); }
-  if (act === "role") { data.role = t.value; ui.tab = null; resetView(); save(); return render(); }
   if ((act === "vrr" || act === "vnobs") && ui.vd) {
     const i = +t.dataset.i, key = act === "vrr" ? "rr" : "nobs";
     ui.vd[key] = t.checked ? [...new Set([...ui.vd[key], i])].sort((a, b) => a - b) : ui.vd[key].filter(x => x !== i);
@@ -1113,7 +1094,12 @@ app.addEventListener("click", e => {
   else if (act === "nope") ui.confirm = null;
   else if (act === "showadd") { ui.adding = true; ui.draft = blankDraft(); }
   else if (act === "canceladd") { ui.adding = false; ui.draft = null; }
-  else if (act === "demo") { loadDemo(); resetView(); ui.tab = "beranda"; save(); }
+  else if (act === "demo") {
+    req("POST", "/api/demo").then(async j => { await pull(); data.active = j.active; resetView(); ui.tab = "beranda"; savePrefs(); render(); },
+      e => { ui.err = e.message; render(); });
+    return;
+  }
+  else if (act === "logout") { req("POST", "/api/auth/logout").catch(() => {}).then(() => loggedOut("")); return; }
   else if (act === "addchild") {
     const d = ui.draft, name = d.name.trim();
     if (!name) ui.err = "Isi nama panggilan anak.";
@@ -1194,7 +1180,7 @@ app.addEventListener("click", e => {
   else if (act === "review") {
     const x = findSession(el.dataset.s);
     /* Setelah rekam ulang, mulai dari keputusan sementara dokter sebelumnya. */
-    if (x && !rrWaiting(x.s)) ui.vd = { sid: x.s.id, user: x.s.answers.slice(), final: ((x.s.rerecord && x.s.rerecord.final) || x.s.answers).slice(), note: "", videoOk: null, doctor: data.doctorName || "", rr: [], nobs: [] };
+    if (x && !rrWaiting(x.s)) ui.vd = { sid: x.s.id, user: x.s.answers.slice(), final: ((x.s.rerecord && x.s.rerecord.final) || x.s.answers).slice(), note: "", videoOk: null, doctor: me.name, rr: [], nobs: [] };
     window.scrollTo(0, 0);
   }
   else if (act === "closereview") ui.vd = null;
@@ -1203,10 +1189,8 @@ app.addEventListener("click", e => {
     if (!x || x.s.status !== "menunggu") ui.vd = null;
     else if (ui.vd.rr.length) ui.err = "Ada butir yang menunggu rekam ulang. Kirim permintaan rekam ulang atau batalkan centangnya.";
     else if (hasVideo(x.s) && ui.vd.videoOk === null) ui.err = "Tandai apakah video dapat dinilai.";
-    else if (!ui.vd.doctor.trim()) ui.err = "Isi nama dokter pemverifikasi.";
     else {
-      data.doctorName = ui.vd.doctor.trim();
-      x.s.verify = { final: ui.vd.final.slice(), note: ui.vd.note.trim(), videoOk: hasVideo(x.s) ? ui.vd.videoOk : null, doctor: data.doctorName, at: Date.now(),
+      x.s.verify = { final: ui.vd.final.slice(), note: ui.vd.note.trim(), videoOk: hasVideo(x.s) ? ui.vd.videoOk : null, doctor: me.name, at: Date.now(),
         notObserved: ui.vd.nobs.filter(i => ui.vd.final[i] === false) };
       x.s.status = "terverifikasi"; ui.vd = null; save(); window.scrollTo(0, 0);
     }
@@ -1215,11 +1199,9 @@ app.addEventListener("click", e => {
   else if (act === "askrr" && ui.vd) {
     const x = findSession(ui.vd.sid);
     if (!x || x.s.status !== "menunggu" || x.s.rerecord) ui.vd = null;
-    else if (!ui.vd.doctor.trim()) ui.err = "Isi nama dokter pemverifikasi.";
     else {
       const now = Date.now();
-      data.doctorName = ui.vd.doctor.trim();
-      x.s.rerecord = { items: ui.vd.rr.slice(), note: ui.vd.note.trim(), doctor: data.doctorName, at: now, due: now + RR_DAYS * DAY, resubmittedAt: null, final: ui.vd.final.slice() };
+      x.s.rerecord = { items: ui.vd.rr.slice(), note: ui.vd.note.trim(), doctor: me.name, at: now, due: now + RR_DAYS * DAY, resubmittedAt: null, final: ui.vd.final.slice() };
       ui.vd = null; save(); window.scrollTo(0, 0);
     }
   }
@@ -1234,24 +1216,97 @@ app.addEventListener("click", e => {
   render();
 });
 /* ---------- mulai ---------- */
+/* ---------- masuk dan daftar ---------- */
+const authUi = { mode: "login", login: "", name: "", password: "", password2: "", err: "", busy: false, note: "" };
+function viewAuth() {
+  const reg = authUi.mode === "register";
+  return `<header class="top"><div class="brand">
+      <svg viewBox="0 0 34 34" aria-hidden="true"><circle cx="17" cy="17" r="15" fill="none" stroke="var(--d0)" stroke-width="3"/><circle cx="17" cy="17" r="9.5" fill="none" stroke="var(--d1)" stroke-width="3" stroke-dasharray="40 100" stroke-linecap="round"/><circle cx="17" cy="17" r="4" fill="var(--d2)"/></svg>
+      <b>CogniTrack</b></div></header>
+    <main><form class="card narrow" data-auth novalidate>
+      <h1 class="title">${reg ? "Daftar sebagai orang tua" : "Masuk"}</h1>
+      <p class="muted" style="margin-bottom:14px">${reg ? "Buat akun untuk menyimpan data skrining anak Anda. Akun dokter dibuat oleh pengelola CogniTrack."
+        : "Masuk sebagai orang tua atau dokter. Dokter melihat kode anak, bukan namanya."}</p>
+      ${authUi.note ? `<p class="note info small" style="margin-bottom:12px">${esc(authUi.note)}</p>` : ""}
+      ${authUi.err ? `<p class="err" role="alert">${esc(authUi.err)}</p>` : ""}
+      ${reg ? `<div class="field"><label for="an">Nama Anda</label><input id="an" type="text" maxlength="60" autocomplete="name" value="${esc(authUi.name)}" data-auth-in="name"></div>` : ""}
+      <div class="field"><label for="al">Email atau nomor HP</label><input id="al" type="text" maxlength="200" autocomplete="username" inputmode="email" value="${esc(authUi.login)}" data-auth-in="login"></div>
+      <div class="field"><label for="ap">Kata sandi</label><input id="ap" type="password" maxlength="200" autocomplete="${reg ? "new-password" : "current-password"}" value="${esc(authUi.password)}" data-auth-in="password">${reg ? `<p class="small muted">Minimal 8 karakter.</p>` : ""}</div>
+      ${reg ? `<div class="field"><label for="ap2">Ulangi kata sandi</label><input id="ap2" type="password" maxlength="200" autocomplete="new-password" value="${esc(authUi.password2)}" data-auth-in="password2"></div>` : ""}
+      <div class="row"><button class="btn pri" type="submit" ${authUi.busy ? "disabled" : ""}>${reg ? "Daftar" : "Masuk"}</button></div>
+      ${canRegister || reg ? `<p class="small muted" style="margin-top:16px">${reg ? `Sudah punya akun? <button class="linkbtn" type="button" data-auth-mode="login">Masuk</button>`
+        : `Orang tua yang belum punya akun? <button class="linkbtn" type="button" data-auth-mode="register">Daftar</button>`}</p>` : ""}
+    </form>
+    <p class="foot">CogniTrack adalah alat skrining dan edukasi, bukan alat diagnosis.</p></main>`;
+}
+function renderAuth() {
+  app.innerHTML = viewAuth();
+  const f = app.querySelector(authUi.err ? "[data-auth-in=password]" : "[data-auth-in]"); if (f && !authUi.busy) f.focus();
+}
+async function submitAuth() {
+  const reg = authUi.mode === "register";
+  if (reg && !authUi.name.trim()) authUi.err = "Isi nama Anda.";
+  else if (!authUi.login.trim()) authUi.err = "Isi email atau nomor HP.";
+  else if (!authUi.password) authUi.err = "Isi kata sandi.";
+  else if (reg && authUi.password.length < 8) authUi.err = "Kata sandi minimal 8 karakter.";
+  else if (reg && authUi.password !== authUi.password2) authUi.err = "Kedua kata sandi tidak sama.";
+  else authUi.err = "";
+  if (authUi.err) return renderAuth();
+  authUi.busy = true; renderAuth();
+  try {
+    const j = await req("POST", reg ? "/api/auth/register" : "/api/auth/login",
+      JSON.stringify(reg ? { name: authUi.name, login: authUi.login, password: authUi.password } : { login: authUi.login, password: authUi.password }));
+    Object.assign(authUi, { password: "", password2: "", err: "", note: "", busy: false });
+    await signedIn(j.user);
+  } catch (e) {
+    authUi.busy = false; authUi.err = e.offline ? "Server tidak dapat dihubungi." : e.message; authUi.password = ""; authUi.password2 = ""; renderAuth();
+  }
+}
+app.addEventListener("submit", e => { if (e.target.matches("[data-auth]")) { e.preventDefault(); submitAuth(); } });
+app.addEventListener("input", e => { const k = e.target.dataset.authIn; if (k) authUi[k] = e.target.value; });
+app.addEventListener("click", e => {
+  const b = e.target.closest("[data-auth-mode]"); if (!b) return;
+  Object.assign(authUi, { mode: b.dataset.authMode, err: "", note: "", password: "", password2: "" }); renderAuth();
+});
+
+async function signedIn(user) {
+  me = user; data.role = user.role; net.err = "";
+  resetView(); ui.tab = null;
+  app.innerHTML = `<main><p class="muted" style="padding:24px 0">Memuat data…</p></main>`;
+  try { await pull(); } catch (e) { net.err = e.message; }
+  /* Impor sekali data yang dulu tersimpan di peramban ini ke akun orang tua yang masih kosong.
+     Hasil verifikasi lama tidak ikut, karena hanya dokter yang dapat menetapkan hasil. */
+  const old = loadLocal();
+  if (me.role === "ortu" && !data.children.length && old && old.children && old.children.length) {
+    data.children = old.children.map(c => ({ ...c, sessions: (c.sessions || []).filter(s => s.by === "ortu" && s.status !== "terverifikasi" && !s.verify && !s.rerecord) }));
+    save(); await flush();
+    if (!net.err) try { localStorage.setItem(KEY + ":imported", localStorage.getItem(KEY) || ""); localStorage.removeItem(KEY); localStorage.removeItem(OLD_KEY); } catch (e) {}
+  }
+  render();
+}
+function loggedOut(note) {
+  me = null; clearTimeout(net.timer);
+  adopt({ children: [], videos: {} }); net.err = ""; upload = null; uploadErr = null;
+  resetView();
+  Object.assign(authUi, { mode: "login", password: "", password2: "", err: "", busy: false, note: note || "" });
+  renderAuth();
+}
+
 async function boot() {
   app.innerHTML = `<main><p class="muted" style="padding:24px 0">Memuat data…</p></main>`;
-  try { await pull(); }
+  let r;
+  try { r = await fetch("/api/auth/me"); }
   catch (e) {
     app.innerHTML = `<main><section class="card narrow" style="margin-top:24px"><h1 class="title">Server tidak dapat dihubungi</h1>
       <p class="muted">CogniTrack sekarang menyimpan data di server lokal. Jalankan <code>npm start</code> di folder proyek, lalu buka <b>http://localhost:3000</b>.</p>
       <div class="row"><button class="btn pri" onclick="location.reload()">Coba lagi</button></div></section></main>`;
     return;
   }
-  /* Impor sekali data yang dulu tersimpan di peramban ini, bila server masih kosong. */
-  const old = loadLocal();
-  if (!data.children.length && old && old.children && old.children.length) {
-    data.children = old.children; save(); await flush();
-    if (!net.err) try { localStorage.setItem(KEY + ":imported", localStorage.getItem(KEY) || ""); localStorage.removeItem(KEY); localStorage.removeItem(OLD_KEY); } catch (e) {}
-  }
-  render();
+  const j = await r.json().catch(() => ({}));
+  canRegister = j.register !== false;
+  if (j.user) await signedIn(j.user); else renderAuth();
   window.addEventListener("focus", refresh);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
-  window.addEventListener("beforeunload", e => { if (dirty() || upload) { flush(); e.preventDefault(); } });
+  window.addEventListener("beforeunload", e => { if (me && (dirty() || upload)) { flush(); e.preventDefault(); } });
 }
 boot();

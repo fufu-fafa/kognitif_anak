@@ -4,7 +4,8 @@
   "private": true,
   "description": "CogniTrack: skrining perkembangan anak (KPSP) dengan server lokal",
   "scripts": {
-    "start": "node --disable-warning=ExperimentalWarning server/server.js"
+    "start": "node --disable-warning=ExperimentalWarning server/server.js",
+    "user": "node --disable-warning=ExperimentalWarning server/users.js"
   },
   "engines": {
     "node": ">=22.13"
