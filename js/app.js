@@ -40,7 +40,9 @@ function newCode() {
   let s = ""; for (let i = 0; i < 4; i++) s += A[Math.floor(Math.random() * A.length)];
   return "CT-" + s;
 }
-function load() {
+const uid = p => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+/* Data lama yang dulu hanya tersimpan di peramban; diimpor sekali ke server bila server masih kosong. */
+function loadLocal() {
   try { const r = localStorage.getItem(KEY); if (r) return JSON.parse(r); } catch (e) {}
   try {
     const o = JSON.parse(localStorage.getItem(OLD_KEY) || "null");
@@ -51,8 +53,104 @@ function load() {
   } catch (e) {}
   return null;
 }
-const data = load() || { v: 2, role: "ortu", fs: 1, doctorName: "", active: null, children: [] };
-function save() { try { localStorage.setItem(KEY, JSON.stringify(data)); } catch (e) {} }
+/* Peran, ukuran teks, anak aktif, dan nama dokter adalah pilihan per perangkat; data anak ada di server. */
+const PREF_KEY = "cognitrack:prefs";
+function loadPrefs() {
+  try { const p = JSON.parse(localStorage.getItem(PREF_KEY) || "null"); if (p) return p; } catch (e) {}
+  const l = loadLocal() || {};
+  return { role: l.role || "ortu", fs: l.fs ?? 1, doctorName: l.doctorName || "", active: l.active || null };
+}
+const data = { v: 2, ...loadPrefs(), children: [] };
+let vids = {};
+function savePrefs() {
+  try { localStorage.setItem(PREF_KEY, JSON.stringify({ role: data.role, fs: data.fs, doctorName: data.doctorName, active: data.active })); } catch (e) {}
+}
+
+/* ---------- sinkronisasi dengan server ----------
+   save() menandai perubahan; flush() mengirim hanya anak/sesi yang berubah dibanding salinan terakhir dari server.
+   Setiap rekaman membawa rev; bila perangkat lain sudah mengubahnya (409), data dimuat ulang dari server. */
+const net = { synced: new Map(), revs: new Map(), timer: null, busy: false, again: false, err: "", offline: false };
+function records() {
+  const m = new Map();
+  data.children.forEach(c => {
+    const { sessions, ...doc } = c;
+    m.set("c:" + c.id, { body: JSON.stringify(doc), url: `/api/children/${enc(c.id)}` });
+    sessions.forEach(s => m.set("s:" + s.id, { body: JSON.stringify(s), url: `/api/children/${enc(c.id)}/sessions/${enc(s.id)}`, parent: "c:" + c.id }));
+  });
+  return m;
+}
+const enc = encodeURIComponent;
+const delUrl = k => (k[0] === "c" ? "/api/children/" : "/api/sessions/") + enc(k.slice(2));
+const dirty = () => { const cur = records(); if (cur.size !== net.synced.size) return true; for (const [k, r] of cur) { const o = net.synced.get(k); if (!o || o.body !== r.body) return true; } return false; };
+
+async function req(method, url, body, rev) {
+  const h = {};
+  if (body !== undefined) h["Content-Type"] = "application/json";
+  if (rev != null) h["If-Match"] = String(rev);
+  let r;
+  try { r = await fetch(url, { method, headers: h, body }); }
+  catch (e) { const x = new Error("Server tidak dapat dihubungi."); x.offline = true; throw x; }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { const x = new Error(j.error || "Gagal menyimpan (" + r.status + ")."); x.status = r.status; throw x; }
+  return j;
+}
+function adopt(st) {
+  net.synced.clear(); net.revs.clear();
+  data.children = st.children.map(c => {
+    const { rev, sessions, ...doc } = c;
+    net.revs.set("c:" + c.id, rev);
+    return { ...doc, sessions: sessions.map(s => { const { rev: sr, ...sd } = s; net.revs.set("s:" + s.id, sr); return sd; }) };
+  });
+  vids = st.videos || {};
+  records().forEach((r, k) => net.synced.set(k, r));
+}
+async function pull() { adopt(await req("GET", "/api/state")); }
+
+function save() { savePrefs(); clearTimeout(net.timer); net.timer = setTimeout(flush, 300); }
+async function flush() {
+  clearTimeout(net.timer);
+  if (net.busy) { net.again = true; return; }
+  net.busy = true;
+  const before = net.err;
+  try {
+    const cur = records(), gone = [...net.synced.keys()].filter(k => !cur.has(k));
+    /* Menghapus anak ikut menghapus sesi dan videonya di server. */
+    for (const k of gone.filter(k => k[0] === "c")) { await req("DELETE", delUrl(k)).catch(e => { if (e.status !== 404) throw e; }); net.synced.delete(k); net.revs.delete(k); }
+    for (const k of gone.filter(k => k[0] === "s")) {
+      if (net.synced.get(k).parent && cur.has(net.synced.get(k).parent)) await req("DELETE", delUrl(k)).catch(e => { if (e.status !== 404) throw e; });
+      net.synced.delete(k); net.revs.delete(k); delete vids[k.slice(2)];
+    }
+    for (const kind of ["c", "s"]) for (const [k, r] of cur) {
+      if (k[0] !== kind) continue;
+      const o = net.synced.get(k); if (o && o.body === r.body) continue;
+      const j = await req("PUT", r.url, r.body, net.revs.get(k));
+      net.revs.set(k, j.rev); net.synced.set(k, r);
+    }
+    net.err = ""; net.offline = false;
+  } catch (e) {
+    net.offline = !!e.offline;
+    if (e.offline) { net.err = "Server tidak dapat dihubungi. Perubahan akan dikirim ulang otomatis."; net.timer = setTimeout(flush, 5000); }
+    else {
+      net.err = e.status === 409 ? "Data ini baru saja diubah di perangkat lain. Tampilan dimuat ulang; periksa lagi perubahan terakhir Anda." : "Perubahan tidak tersimpan: " + e.message;
+      try { await pull(); } catch (x) {}
+    }
+  }
+  net.busy = false;
+  if (net.again) { net.again = false; return flush(); }
+  if (net.err || before) render();
+}
+/* Ambil data terbaru saat kembali ke aplikasi, misalnya agar dokter melihat kiriman baru. */
+async function refresh() {
+  if (net.busy || dirty() || upload) return;
+  let st;
+  try { st = await req("GET", "/api/state"); } catch (e) { return; }
+  /* Jangan menimpa perubahan yang dibuat selama data diambil. */
+  if (net.busy || dirty() || upload) return;
+  const was = JSON.stringify([data.children, vids]);
+  adopt(st);
+  if (JSON.stringify([data.children, vids]) !== was) render();
+}
+async function ensureSynced() { await flush(); if (net.err) throw new Error(net.err); }
 
 const ui = { tab: null, adding: false, draft: null, err: "", confirm: null, editConsent: false,
   report: null, vd: null, vview: null, copied: false, showText: false };
@@ -169,7 +267,7 @@ function consentFields(d) {
     <div class="note info small"><ul class="list">
       <li>Data yang dikumpulkan hanya nama panggilan, tanggal lahir, jawaban skrining, dan video bila Anda setujui.</li>
       <li>Dokter hanya melihat kode anak, bukan namanya. Aplikasi tidak memuat iklan.</li>
-      <li>Video hanya dapat dibuka dokter pemverifikasi dan dihapus setelah periode penelitian berakhir. Pada prototipe ini, video belum benar-benar direkam atau diunggah.</li>
+      <li>Video hanya dapat dibuka dokter pemverifikasi dan dihapus setelah periode penelitian berakhir. Video disimpan di server CogniTrack, bukan di galeri perangkat.</li>
       <li>Anda dapat mengubah persetujuan atau menghapus semua data anak kapan saja.</li>
     </ul></div>
     <div class="field"><label for="wali">Nama orang tua atau wali</label><input id="wali" type="text" maxlength="60" value="${esc(d.wali)}" data-in="wali" autocomplete="off"></div>
@@ -249,6 +347,42 @@ function resultBlock(s, withBtns) {
 const DAY = 864e5, RR_DAYS = 7;
 const rrWaiting = s => !!(s.rerecord && !s.rerecord.resubmittedAt && Date.now() < s.rerecord.due);
 const rrOverdue = s => !!(s.rerecord && !s.rerecord.resubmittedAt && Date.now() >= s.rerecord.due);
+/* ---------- unggah video ---------- */
+let upload = null;
+function uploader(s, canDelete) {
+  const list = vidsOf(s), up = upload && upload.sid === s.id ? upload : null;
+  return `<label class="btn ${list.length ? "" : "pri"}${up ? " disabled" : ""}">${list.length ? "Tambah video" : "Rekam atau pilih video"}<input type="file" accept="video/*" multiple data-upload="${s.id}" ${up ? "disabled" : ""}></label>
+    ${up ? `<p class="small" role="status">Mengunggah video ${up.idx + 1} dari ${up.total} · ${up.pct}%</p>` : ""}
+    ${uploadErr && uploadErr.sid === s.id ? `<p class="err" role="alert">${esc(uploadErr.msg)}</p>` : ""}
+    ${list.length ? `<ul class="vlist">${list.map(v => `<li><span class="vn">${esc(v.name)} <span class="small muted">· ${fmtSize(v.size)}</span></span>${canDelete || (s.rerecord && v.at > s.rerecord.at && !s.rerecord.resubmittedAt) ? `<button class="btn sm danger" data-act="vdel" data-s="${s.id}" data-v="${v.id}">Hapus</button>` : `<span class="small muted">terkirim</span>`}</li>`).join("")}</ul>` : ""}`;
+}
+let uploadErr = null;
+function putVideo(sid, f, onProgress) {
+  return new Promise((ok, fail) => {
+    const x = new XMLHttpRequest();
+    x.open("POST", `/api/sessions/${enc(sid)}/videos`);
+    x.setRequestHeader("Content-Type", f.type || "video/mp4");
+    x.setRequestHeader("X-Filename", enc(f.name));
+    x.upload.onprogress = e => e.lengthComputable && onProgress(Math.round(e.loaded / e.total * 100));
+    x.onload = () => { let j = {}; try { j = JSON.parse(x.responseText); } catch (e) {} x.status < 300 ? ok(j) : fail(new Error(j.error || "Unggahan gagal (" + x.status + ").")); };
+    x.onerror = () => fail(new Error("Server tidak dapat dihubungi."));
+    x.send(f);
+  });
+}
+async function uploadVideos(sid, files) {
+  if (!files.length || upload) return;
+  uploadErr = null;
+  try { await ensureSynced(); } catch (e) { uploadErr = { sid, msg: e.message }; return render(); }
+  upload = { sid, total: files.length, idx: 0, pct: 0 }; render();
+  for (const f of files) {
+    try {
+      const v = await putVideo(sid, f, p => { upload.pct = p; const st = app.querySelector("[role=status]"); if (st) st.textContent = `Mengunggah video ${upload.idx + 1} dari ${upload.total} · ${p}%`; });
+      (vids[sid] = vids[sid] || []).push(v);
+    } catch (e) { uploadErr = { sid, msg: `${f.name}: ${e.message}` }; break; }
+    upload.idx++; upload.pct = 0;
+  }
+  upload = null; render();
+}
 function rerecordBlock(s) {
   const rr = s.rerecord; if (!rr) return "";
   if (rr.resubmittedAt) return `<p class="note ok small">Video rekam ulang terkirim ${fmtTime(rr.resubmittedAt)}. Dokter akan menetapkan hasil akhir.</p>`;
@@ -259,8 +393,8 @@ function rerecordBlock(s) {
     <p class="small">Butir berikut belum teramati jelas di video. Rekam ulang sebelum <b>${fmtTime(rr.due)}</b>. Permintaan ini hanya diberikan sekali.</p>
     <ol class="list plain small">${rr.items.map(i => `<li><b>${i + 1}.</b> ${esc(itemShort(items[i]))}</li>`).join("")}</ol>
     ${rr.note ? `<p class="small"><b>Catatan dokter:</b> ${esc(rr.note)}</p>` : ""}
-    <p class="note warn small"><b>Ini hanyalah prototipe.</b> Video belum benar-benar direkam atau diunggah. Tombol di bawah hanya menandai bahwa rekaman ulang sudah dikirim.</p>
-    <div class="row"><button class="btn pri sm" data-act="resubmit" data-s="${s.id}">Kirim ulang video ke dokter</button></div>
+    ${uploader(s, false)}
+    <div class="row"><button class="btn pri sm" data-act="resubmit" data-s="${s.id}" ${vidsOf(s).some(v => v.at > rr.at) && !(upload && upload.sid === s.id) ? "" : "disabled"}>Kirim ulang video ke dokter</button></div>
   </div>`;
 }
 function pendingBlock(s) {
@@ -438,11 +572,10 @@ function viewVideo(c, dr, items) {
       <li>Sebutkan nomor butir di awal rekaman, misalnya “butir 3”.</li>
       <li>Pastikan cahaya cukup, anak terlihat jelas, dan hindari merekam orang lain yang tidak perlu.</li>
     </ul></div>
-    <div class="card dropzone" aria-disabled="true">
+    <div class="card dropzone">
       <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="6" width="13" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M15.5 10.5 21 7.5v9l-5.5-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
       <h2 class="h2">Unggah video</h2>
-      <p class="note warn small"><b>Ini hanyalah prototipe.</b> Fitur rekam dan unggah video belum tersedia, jadi tidak ada video yang direkam atau dikirim. Pada aplikasi yang sebenarnya, video diunggah di sini lalu diteruskan ke dokter pemverifikasi. Untuk demonstrasi, dasbor dokter menampilkan contoh tampilan video.</p>
-      <button class="btn" disabled>Rekam atau pilih video</button>
+      ${uploader(dr, true)}
     </div>`
     : `<div class="note info">Anda tidak menyetujui perekaman video. Dokter akan menelaah berdasarkan jawaban checklist, dan dapat mengonfirmasi saat kunjungan. Persetujuan dapat diubah di Beranda.</div>`;
   return `<div class="stack">
@@ -450,7 +583,7 @@ function viewVideo(c, dr, items) {
     ${body}
     <div class="row">
       <button class="btn" data-act="toisi">Kembali ke checklist</button>
-      <button class="btn pri" data-act="submit">Kirim ke dokter untuk verifikasi</button>
+      <button class="btn pri" data-act="submit" ${upload && upload.sid === dr.id ? "disabled" : ""}>Kirim ke dokter untuk verifikasi${c.consent.video && !realVid(dr) ? " tanpa video" : ""}</button>
     </div>
   </div>`;
 }
@@ -597,9 +730,11 @@ function exportJSON(c) {
 }
 
 /* ---------- dokter ---------- */
-/* Prototipe: video tidak benar-benar direkam atau diunggah. Sesi dengan persetujuan video
-   ditandai s.video = true, dan halaman video menampilkan contoh tampilan pemutar per butir. */
-const hasVideo = s => !!(s.video || s.videoCount);
+/* Video asli diunggah ke server (vids[s.id]). Data contoh (dummy) hanya ditandai s.video = true,
+   dan halaman video menampilkan contoh tampilan pemutar per butir. */
+const vidsOf = s => vids[s.id] || [];
+const realVid = s => vidsOf(s).length > 0;
+const hasVideo = s => !!(s.video || s.videoCount || realVid(s));
 const clipsOf = s => hasVideo(s) ? KPSP[s.form].map((it, i) => i).filter(i => !KPSP[s.form][i][3].includes("n")) : [];
 const clipSec = (s, i) => 12 + ((i * 17 + s.form) % 38);
 const mmss = t => Math.floor(t / 60) + ":" + pad(t % 60);
@@ -611,6 +746,10 @@ function thumb(s, i, small) {
   const it = KPSP[s.form][i];
   return `<span class="thumb${small ? " sm" : ""}" style="--c:${DOMS[it[0]].c}" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/></svg><em>${mmss(clipSec(s, i))}</em></span>`;
 }
+function realThumb(s, small) {
+  return `<span class="thumb${small ? " sm" : ""}" style="--c:var(--d0)" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/></svg><em>${vidsOf(s).length} video</em></span>`;
+}
+const fmtSize = b => b >= 1048576 ? dec(b / 1048576, 1) + " MB" : Math.max(1, Math.round(b / 1024)) + " KB";
 function viewAntrean() {
   if (ui.vd) { const x = findSession(ui.vd.sid); if (x && x.s.status === "menunggu") return viewVerify(x.c, x.s); ui.vd = null; }
   const now = Date.now();
@@ -631,9 +770,9 @@ function viewAntrean() {
       const rrTag = !rr ? "" : wait ? `<span class="pill warn">Rekam ulang diminta · batas ${fmtTime(rr.due)}</span>`
         : rr.resubmittedAt ? `<span class="pill ok">Video rekam ulang diterima</span>` : `<span class="pill bad">Batas rekam ulang lewat</span>`;
       return `<article class="card qrow">
-        ${cl.length ? thumb(s, cl[0]) : `<span class="thumb none" aria-hidden="true">Tanpa video</span>`}
+        ${realVid(s) ? realThumb(s) : cl.length ? thumb(s, cl[0]) : `<span class="thumb none" aria-hidden="true">Tanpa video</span>`}
         <div class="qmain"><p>${sessionMeta(c, s)}</p>
-          <p class="small muted">Dikirim ${fmtTime(s.submittedAt)} · menunggu ${fmtDur(now - s.submittedAt)} · ${cl.length ? cl.length + " klip video" : "tanpa video"}</p>${rrTag}</div>
+          <p class="small muted">Dikirim ${fmtTime(s.submittedAt)} · menunggu ${fmtDur(now - s.submittedAt)} · ${realVid(s) ? vidsOf(s).length + " video" : cl.length ? cl.length + " klip video (contoh)" : "tanpa video"}</p>${rrTag}</div>
         <div class="row" style="margin-top:0">
           ${cl.length ? `<button class="btn sm" data-act="vopen" data-s="${s.id}" data-back="antrean">Lihat video</button>` : ""}
           ${wait ? `<button class="btn sm" disabled title="Dapat ditinjau setelah video ulang diterima atau batas waktu lewat">Menunggu rekaman ulang</button>` : `<button class="btn pri sm" data-act="review" data-s="${s.id}">Tinjau</button>`}
@@ -670,7 +809,7 @@ function viewVerify(c, s) {
         ${vd.rr.includes(i) ? `<span class="pill warn">menunggu rekam ulang</span>` : finalSeg(i, vd.final[i], vd.nobs.includes(i))}
         <span class="small corr-lbl">dikoreksi</span>
         ${vd.nobs.includes(i) ? `<span class="pill">tidak teramati</span>` : ""}
-        ${cl.includes(i) ? `<button class="linkbtn small" data-act="vopen" data-s="${s.id}" data-i="${i}" data-back="verify">Lihat video butir ${i + 1}</button>` : ""}
+        ${cl.includes(i) && !realVid(s) ? `<button class="linkbtn small" data-act="vopen" data-s="${s.id}" data-i="${i}" data-back="verify">Lihat video butir ${i + 1}</button>` : ""}
       </div>
       ${followView(s, i)}
       ${clipCtl(i)}
@@ -681,8 +820,11 @@ function viewVerify(c, s) {
     ${draftBanner()}
     <section class="card"><h2 class="h2">Video dari pengguna</h2>
       ${rr ? `<p class="note info small" style="margin-bottom:12px">Rekam ulang sudah diminta sekali (${fmtTime(rr.at)}) untuk butir ${rr.items.map(i => i + 1).join(", ")}. ${rr.resubmittedAt ? `Video ulang diterima ${fmtTime(rr.resubmittedAt)}.` : "Video ulang tidak dikirim sampai batas waktu."} Butir yang tetap tidak teramati ditetapkan “Tidak” dengan catatan “tidak teramati”.</p>` : ""}
-      ${cl.length ? `<div class="strip">${cl.map(i => `<button class="clipbtn" data-act="vopen" data-s="${s.id}" data-i="${i}" data-back="verify">${thumb(s, i, true)}<span class="small">Butir ${i + 1}</span></button>`).join("")}</div>
-        <div class="row"><button class="btn sm" data-act="vopen" data-s="${s.id}" data-back="verify">Buka halaman video (${cl.length} klip)</button></div>
+      ${cl.length ? `${realVid(s)
+          ? `<ul class="vlist">${vidsOf(s).map(v => `<li><span class="vn">${esc(v.name)} <span class="small muted">· ${fmtSize(v.size)} · ${fmtTime(v.at)}</span></span><button class="btn sm" data-act="vopen" data-s="${s.id}" data-v="${v.id}" data-back="verify">Putar</button></li>`).join("")}</ul>
+            <p class="small muted" style="margin-top:8px">Orang tua diminta menyebutkan nomor butir di awal setiap rekaman.</p>`
+          : `<div class="strip">${cl.map(i => `<button class="clipbtn" data-act="vopen" data-s="${s.id}" data-i="${i}" data-back="verify">${thumb(s, i, true)}<span class="small">Butir ${i + 1}</span></button>`).join("")}</div>
+        <div class="row"><button class="btn sm" data-act="vopen" data-s="${s.id}" data-back="verify">Buka halaman video (${cl.length} klip)</button></div>`}
         <fieldset class="fs-radio"><legend>Apakah video dapat dinilai?</legend>
           <label class="chk"><input type="radio" name="vok" value="1" data-in="vok" ${vd.videoOk === true ? "checked" : ""}> Dapat dinilai</label>
           <label class="chk"><input type="radio" name="vok" value="0" data-in="vok" ${vd.videoOk === false ? "checked" : ""}> Tidak dapat dinilai (kualitas rekaman kurang)</label>
@@ -720,6 +862,7 @@ function viewVideos() {
   const finalOf = i => editable ? ui.vd.final[i] : s.verify ? s.verify.final[i] : null;
   const back = vv.back === "verify" ? "← Kembali ke verifikasi" : vv.back === "selesai" ? "← Kembali ke daftar terverifikasi" : "← Kembali ke dasbor";
   if (!cl.length) return `<div class="stack"><div class="row" style="margin-top:0"><button class="btn sm" data-act="vclose">${back}</button></div><div class="card empty"><p class="muted">Sesi ini tidak disertai video.</p></div></div>`;
+  if (realVid(s)) return viewRealVideos(c, s, back);
   if (!cl.includes(vv.clip)) vv.clip = cl[0];
   const i = vv.clip, it = items[i], pos = cl.indexOf(i), dur = clipSec(s, i), fin = finalOf(i);
   const ans = (v, lbl) => `<span class="achip ${v === true ? "y" : v === false ? "n" : ""}">${lbl}: ${v === true ? "Ya" : v === false ? "Tidak" : "–"}</span>`;
@@ -765,6 +908,40 @@ function viewVideos() {
     </div>
   </div>`;
 }
+/* Halaman video asli. Jawaban akhir diubah tanpa render ulang (patchVerify) agar video tidak berhenti. */
+function viewRealVideos(c, s, back) {
+  const vv = ui.vview, list = vidsOf(s), items = KPSP[s.form], cl = clipsOf(s);
+  const v = list.find(x => x.id === vv.vid) || list[0]; vv.vid = v.id;
+  const editable = vv.back === "verify" && ui.vd && ui.vd.sid === s.id && s.status === "menunggu";
+  const rows = cl.map(i => {
+    const fin = editable ? ui.vd.final[i] : s.verify ? s.verify.final[i] : null;
+    return `<article class="item vrow2 ${fin !== null && fin !== s.answers[i] ? "corr" : ""}" data-vrow="${i}">
+      ${itemHead(items[i], i)}
+      <p class="small">${esc(itemShort(items[i]))}</p>
+      <div class="vans"><span class="small">Pengguna: <b>${s.answers[i] ? "Ya" : "Tidak"}</b></span>
+        ${editable ? `<span class="small">Jawaban akhir:</span>${ui.vd.rr.includes(i) ? `<span class="pill warn">menunggu rekam ulang</span>` : finalSeg(i, fin, ui.vd.nobs.includes(i))}<span class="small corr-lbl">dikoreksi</span>`
+          : fin !== null ? `<span class="small">Akhir: <b>${fin ? "Ya" : "Tidak"}</b></span>` : ""}
+      </div></article>`;
+  }).join("");
+  return `<div class="stack">
+    <div class="row" style="margin-top:0"><button class="btn sm" data-act="vclose">${back}</button></div>
+    <div><h1 class="title">Video dari pengguna</h1><p class="muted">${sessionMeta(c, s)} · dikirim ${fmtTime(s.submittedAt)} · ${list.length} video</p></div>
+    <div class="vpage">
+      <div class="stack" style="gap:12px">
+        <video class="vreal" src="/api/videos/${enc(v.id)}" controls playsinline preload="metadata"></video>
+        <p class="small muted">${esc(v.name)} · ${fmtSize(v.size)} · diunggah ${fmtTime(v.at)}</p>
+        <section class="card"><h2 class="h2">Butir yang dapat direkam</h2>${rows}</section>
+      </div>
+      <aside class="card clips" aria-label="Daftar video">
+        <h2 class="h2">Video</h2>
+        ${list.map((x, k) => `<button class="clip" data-act="vpick" data-v="${x.id}" aria-current="${x.id === v.id}">
+          ${realThumbOne(k)}<span class="clip-t"><span><b>Video ${k + 1}</b></span><span class="small muted">${esc(x.name)}</span><span class="small">${fmtSize(x.size)} · ${fmtTime(x.at)}${s.rerecord && x.at > s.rerecord.at ? " · rekam ulang" : ""}</span></span>
+        </button>`).join("")}
+      </aside>
+    </div>
+  </div>`;
+}
+const realThumbOne = k => `<span class="thumb sm" style="--c:var(--d0)" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/></svg><em>${k + 1}</em></span>`;
 function viewSelesai() {
   const list = allSessions().filter(x => x.s.status === "terverifikasi").sort((a, b) => b.s.verify.at - a.s.verify.at);
   return `<div class="stack">
@@ -813,7 +990,7 @@ function viewIndikator() {
   done.forEach(s => KPSP[s.form].forEach((it, i) => { const sp = followSpec(it); if (sp && s.answers[i] === true) { nFollow++; if (followConflict(sp, followOf(s, i))) nConflict++; } }));
   const krow = (lbl, k) => `<tr><td>${lbl}</td><td>${k ? `κ = ${k.k === null ? "–" : dec(k.k)} · kesepakatan ${pct(k.po * k.n, k.n)} · n = ${k.n}<div class="small muted">${landisKoch(k.k)}</div>` : "–"}</td></tr>`;
   return `<div class="stack">
-    <div><h1 class="title">Indikator feasibility</h1><p class="muted">Dihitung dari data di perangkat ini untuk uji feasibility alur verifikasi (Subbab 3.4). Gunakan data dummy saat uji fungsionalitas.</p></div>
+    <div><h1 class="title">Indikator feasibility</h1><p class="muted">Dihitung dari semua data di server untuk uji feasibility alur verifikasi (Subbab 3.4). Gunakan data dummy saat uji fungsionalitas.</p></div>
     <div class="card scroll"><table class="rt"><tbody>
       <tr><td>Sesi skrining diselesaikan dari yang dimulai</td><td>${done.length}/${all.length} (${pct(done.length, all.length)})</td></tr>
       <tr><td>Checklist yang disertai video</td><td>${withVid.length}/${done.length} (${pct(withVid.length, done.length)})</td></tr>
@@ -828,7 +1005,7 @@ function viewIndikator() {
       ${krow("Cohen's kappa pengguna–dokter, per butir", ki)}
       ${krow("Cohen's kappa pengguna–dokter, per kategori hasil", kc)}
     </tbody></table></div>
-    <p class="foot">Interpretasi kappa menurut Landis dan Koch (1977). Kesepakatan antar-dokter (20% checklist ditinjau dua dokter) belum tersedia di prototype ini. Pada prototipe, “disertai video” berarti orang tua menyetujui perekaman; videonya sendiri belum diunggah.</p>
+    <p class="foot">Interpretasi kappa menurut Landis dan Koch (1977). Kesepakatan antar-dokter (20% checklist ditinjau dua dokter) belum tersedia di prototype ini. “Disertai video” berarti ada video yang diunggah; pada data contoh (dummy), sesi hanya ditandai berisi video.</p>
   </div>`;
 }
 
@@ -836,19 +1013,19 @@ function viewIndikator() {
 function isoAgo(months, days) { const t = new Date(); t.setMonth(t.getMonth() - months); t.setDate(t.getDate() - days); return isoOf(t); }
 function loadDemo() {
   const now = Date.now(), consent = { wali: "Orang tua contoh", rel: "Ibu", at: todayISO(), data: true, video: true, guru: true };
-  const mk = (name, dob) => ({ id: "c" + Math.random().toString(36).slice(2, 9), code: newCode(), name, dob, prem: false, consent: { ...consent }, demo: true, sessions: [] });
+  const mk = (name, dob) => ({ id: uid("c"), code: newCode(), name, dob, prem: false, consent: { ...consent }, demo: true, sessions: [] });
   const a = mk("Contoh Rara", isoAgo(26, 5)), b = mk("Contoh Bima", isoAgo(10, 20)), d = mk("Contoh Sinta", isoAgo(19, 5));
-  const sa = { id: "s" + now, at: isoAgo(0, 3), form: 24, age: ageParts(a.dob, isoAgo(0, 3)), by: "ortu", step: "video", video: true,
+  const sa = { id: uid("s"), at: isoAgo(0, 3), form: 24, age: ageParts(a.dob, isoAgo(0, 3)), by: "ortu", step: "video", video: true,
     answers: [true, true, false, false, true, true, true, true, true, false], status: "terverifikasi", submittedAt: now - 3 * 864e5,
     follow: { 4: "celana dan kaos", 5: 0, 6: 0, 7: 1 } };
   sa.verify = { final: [true, true, false, false, true, true, true, false, true, false], note: "Latih kosakata dan kemampuan menunjuk bagian tubuh setiap hari.", videoOk: true, doctor: "dr. Contoh, Sp.A", at: now - 2 * 864e5 };
   const f = formFor(ageParts(b.dob, todayISO()).rounded);
-  const sb = { id: "s" + (now + 1), at: todayISO(), form: f, age: ageParts(b.dob, todayISO()), by: "guru", step: "video", video: true,
+  const sb = { id: uid("s"), at: todayISO(), form: f, age: ageParts(b.dob, todayISO()), by: "guru", step: "video", video: true,
     answers: KPSP[f].map((_, i) => i !== 3), status: "menunggu", submittedAt: now - 36e5, verify: null,
     follow: { 4: 0, 5: "ma-ma", 6: 0, 7: 0 } };
   /* Sinta: rekam ulang diminta 9 hari lalu dan tidak dikirim sampai batas waktu. */
   const fd = formFor(ageParts(d.dob, todayISO()).rounded), ad = KPSP[fd].map((_, i) => i !== 8);
-  const sd = { id: "s" + (now + 2), at: isoAgo(0, 10), form: fd, age: ageParts(d.dob, isoAgo(0, 10)), by: "ortu", step: "video", video: true,
+  const sd = { id: uid("s"), at: isoAgo(0, 10), form: fd, age: ageParts(d.dob, isoAgo(0, 10)), by: "ortu", step: "video", video: true,
     answers: ad, status: "menunggu", submittedAt: now - 10 * DAY, verify: null,
     follow: { 1: [{ w: "mamam", a: "makan" }, { w: "cucu", a: "susu" }, { w: "bola", a: "bola" }], 2: 3, 3: 0, 4: "menyapu dengan sapu kecil" },
     rerecord: { items: [7], note: "Rekam anak berjalan di sepanjang ruangan dengan seluruh tubuh terlihat.", doctor: "dr. Contoh, Sp.A", at: now - 9 * DAY, due: now - 2 * DAY, resubmittedAt: null, final: ad.slice() } };
@@ -878,8 +1055,8 @@ function render() {
       body = tabs() + (ui.tab === "skrining" ? viewSkrining(c) : ui.tab === "stimulasi" ? viewStimulasi(c) : ui.tab === "riwayat" ? viewRiwayat(c) : viewBeranda(c));
     }
   }
-  app.innerHTML = header() + `<main>${body}</main>
-    <p class="foot noprint">Prototype Tahap 1 (MVP). Peran dapat diganti di kanan atas untuk demonstrasi, dan semua data tersimpan di peramban perangkat ini.</p>`;
+  app.innerHTML = header() + `<main>${net.err ? `<p class="note ${net.offline ? "warn" : "bad"} small" role="alert" style="margin-bottom:14px">${esc(net.err)}</p>` : ""}${body}</main>
+    <p class="foot noprint">Prototype Tahap 1 (MVP). Peran dapat diganti di kanan atas untuk demonstrasi. Data dan video tersimpan di server CogniTrack.</p>`;
 }
 
 /* ---------- event ---------- */
@@ -904,6 +1081,7 @@ function setFollow(el) {
 app.addEventListener("input", e => { if (!setFollow(e.target)) setField(e.target); });
 app.addEventListener("change", e => {
   const t = e.target, act = t.dataset.act;
+  if (t.dataset.upload) { const files = [...t.files]; t.value = ""; return uploadVideos(t.dataset.upload, files); }
   if (act === "switch") { data.active = t.value; resetView(); save(); return render(); }
   if (act === "role") { data.role = t.value; ui.tab = null; resetView(); save(); return render(); }
   if ((act === "vrr" || act === "vnobs") && ui.vd) {
@@ -920,12 +1098,14 @@ function resetView() {
   Object.assign(ui, { adding: false, draft: null, err: "", confirm: null, editConsent: false, report: null, vd: null, vview: null, copied: false, showText: false });
 }
 app.addEventListener("click", e => {
+  if (net.err && !net.offline) net.err = "";
   const el = e.target.closest("[data-act]");
   if (!el || el.tagName === "SELECT" || el.tagName === "INPUT" || el.disabled) return;
   const act = el.dataset.act, c = child();
   if (act === "vset") {
     ui.vd.final[+el.dataset.i] = el.dataset.v === "y";
-    return ui.vview ? render() : patchVerify(+el.dataset.i);
+    const x = ui.vview && findSession(ui.vview.sid);
+    return ui.vview && !(x && realVid(x.s)) ? render() : patchVerify(+el.dataset.i);
   }
   ui.err = "";
   if (act === "tab") { ui.tab = el.dataset.t; resetView(); window.scrollTo(0, 0); }
@@ -942,7 +1122,7 @@ app.addEventListener("click", e => {
     else if (ageParts(d.dob, todayISO()).rounded > 72) ui.err = "CogniTrack Tahap 1 untuk anak umur 3–72 bulan. Periksa kembali tanggal lahirnya.";
     else ui.err = consentErr(d);
     if (!ui.err) {
-      const id = "c" + Date.now();
+      const id = uid("c");
       data.children.push({ id, code: newCode(), name, dob: d.dob, prem: d.prem, consent: consentOf(d), sessions: [] });
       data.active = id; resetView(); ui.tab = "beranda"; save();
     }
@@ -968,7 +1148,7 @@ app.addEventListener("click", e => {
   else if (act === "start" && c && !draftOf(c) && !pendingOf(c)) {
     const at = todayISO(), age = ageParts(c.dob, at), form = formFor(age.rounded);
     if (form) {
-      c.sessions.push({ id: "s" + Date.now(), at, form, age, by: data.role, step: "isi", answers: KPSP[form].map(() => null), status: "draft", verify: null });
+      c.sessions.push({ id: uid("s"), at, form, age, by: data.role, step: "isi", answers: KPSP[form].map(() => null), status: "draft", verify: null });
       save(); window.scrollTo(0, 0);
     }
   }
@@ -985,7 +1165,13 @@ app.addEventListener("click", e => {
   }
   else if (act === "resubmit") {
     const x = findSession(el.dataset.s);
-    if (x && rrWaiting(x.s)) { x.s.rerecord.resubmittedAt = Date.now(); save(); }
+    if (x && rrWaiting(x.s) && vidsOf(x.s).some(v => v.at > x.s.rerecord.at)) { x.s.rerecord.resubmittedAt = Date.now(); save(); }
+  }
+  else if (act === "vdel") {
+    const sid = el.dataset.s, vid = el.dataset.v;
+    req("DELETE", "/api/videos/" + enc(vid)).then(() => { vids[sid] = vidsOf({ id: sid }).filter(v => v.id !== vid); uploadErr = null; render(); },
+      e => { uploadErr = { sid, msg: e.message }; render(); });
+    return;
   }
   else if (act === "canceldraft") ui.confirm = "canceldraft";
   else if (act === "canceldraftyes" && c) { const dr = draftOf(c); if (dr) { c.sessions = c.sessions.filter(s => s !== dr); save(); } ui.confirm = null; }
@@ -993,7 +1179,7 @@ app.addEventListener("click", e => {
   else if (act === "toisi" && c) { const dr = draftOf(c); if (dr) { dr.step = "isi"; save(); } }
   else if (act === "submit" && c) {
     const dr = draftOf(c);
-    if (dr) { dr.status = "menunggu"; dr.submittedAt = Date.now(); dr.video = !!c.consent.video; ui.confirm = null; ui.tab = "beranda"; save(); window.scrollTo(0, 0); }
+    if (dr) { dr.status = "menunggu"; dr.submittedAt = Date.now(); dr.video = vidsOf(dr).length > 0; ui.confirm = null; ui.tab = "beranda"; save(); window.scrollTo(0, 0); }
   }
   else if (act === "report") { ui.tab = data.role === "dokter" ? ui.tab : "riwayat"; ui.report = el.dataset.s; ui.copied = false; ui.showText = false; window.scrollTo(0, 0); }
   else if (act === "closereport") { ui.report = null; ui.showText = false; ui.copied = false; }
@@ -1038,12 +1224,34 @@ app.addEventListener("click", e => {
     }
   }
   else if (act === "vopen") {
-    ui.vview = { sid: el.dataset.s, clip: el.dataset.i !== undefined ? +el.dataset.i : null, back: el.dataset.back, playing: false };
+    ui.vview = { sid: el.dataset.s, clip: el.dataset.i !== undefined ? +el.dataset.i : null, vid: el.dataset.v || null, back: el.dataset.back, playing: false };
     window.scrollTo(0, 0);
   }
   else if (act === "vclip") { ui.vview.clip = +el.dataset.i; ui.vview.playing = false; }
+  else if (act === "vpick") ui.vview.vid = el.dataset.v;
   else if (act === "vplay") ui.vview.playing = !ui.vview.playing;
   else if (act === "vclose") { ui.vview = null; window.scrollTo(0, 0); }
   render();
 });
-render();
+/* ---------- mulai ---------- */
+async function boot() {
+  app.innerHTML = `<main><p class="muted" style="padding:24px 0">Memuat data…</p></main>`;
+  try { await pull(); }
+  catch (e) {
+    app.innerHTML = `<main><section class="card narrow" style="margin-top:24px"><h1 class="title">Server tidak dapat dihubungi</h1>
+      <p class="muted">CogniTrack sekarang menyimpan data di server lokal. Jalankan <code>npm start</code> di folder proyek, lalu buka <b>http://localhost:3000</b>.</p>
+      <div class="row"><button class="btn pri" onclick="location.reload()">Coba lagi</button></div></section></main>`;
+    return;
+  }
+  /* Impor sekali data yang dulu tersimpan di peramban ini, bila server masih kosong. */
+  const old = loadLocal();
+  if (!data.children.length && old && old.children && old.children.length) {
+    data.children = old.children; save(); await flush();
+    if (!net.err) try { localStorage.setItem(KEY + ":imported", localStorage.getItem(KEY) || ""); localStorage.removeItem(KEY); localStorage.removeItem(OLD_KEY); } catch (e) {}
+  }
+  render();
+  window.addEventListener("focus", refresh);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+  window.addEventListener("beforeunload", e => { if (dirty() || upload) { flush(); e.preventDefault(); } });
+}
+boot();

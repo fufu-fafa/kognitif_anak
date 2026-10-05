@@ -199,6 +199,13 @@ details.guide .kv{margin-top:10px}
 .p-track i{display:block;height:100%;width:0;background:#fff}
 .p-track i.run{animation:prog var(--dur) linear forwards}
 @keyframes prog{to{width:100%}}
+video.vreal{display:block;width:100%;aspect-ratio:16/9;border-radius:18px;background:#0d0b14}
+label.btn{display:inline-block;cursor:pointer}
+label.btn.disabled{opacity:.5;cursor:not-allowed}
+label.btn input[type=file]{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+.vlist{list-style:none;margin:0;padding:0;display:grid;gap:6px;width:100%;text-align:left}
+.vlist li{display:flex;align-items:center;gap:10px;justify-content:space-between;border:1px solid var(--line);border-radius:12px;padding:8px 12px}
+.vlist .vn{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media (prefers-reduced-motion:reduce){.p-track i.run{animation:none;width:35%}}
 .clips{display:grid;gap:4px;padding:14px}
 .clip{display:flex;gap:10px;align-items:flex-start;text-align:left;border:1px solid transparent;background:none;border-radius:14px;padding:8px;color:inherit}

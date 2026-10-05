@@ -1,0 +1,12 @@
+{
+  "name": "cognitrack",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CogniTrack: skrining perkembangan anak (KPSP) dengan server lokal",
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server/server.js"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}
