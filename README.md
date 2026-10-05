@@ -15,11 +15,13 @@ Buka http://localhost:3000. Data tersimpan di folder `data/` (`cognitrack.db` da
 ## Akun
 
 - **Orang tua** mendaftar sendiri di halaman masuk (email atau nomor HP + kata sandi minimal 8 karakter), dan hanya melihat anaknya sendiri.
+- **Guru PAUD** mendaftar sendiri (pilih "Guru PAUD" saat daftar), lalu menambahkan murid dengan **kode anak** (misalnya `CT-7KQ2`) yang diberikan orang tua. Kode tampil di Beranda orang tua. Murid hanya dapat ditambahkan, dan tetap terlihat, selama orang tua mencentang izin pengisian oleh guru. Guru dapat mengisi dan mengirim skrining serta mengunggah video, tetapi tidak dapat mengubah profil anak. Kode yang salah dibatasi 10 kali per jam per guru.
 - **Dokter** dibuat oleh pengelola lewat baris perintah. Dokter melihat semua skrining dengan kode anak, tanpa nama anak dan nama wali, dan hanya dapat menetapkan hasil atau meminta rekam ulang.
 
 ```bash
 npm run user -- add-doctor dokter@contoh.id "dr. Nama, Sp.A"
 npm run user -- add-parent 081234567890 "Nama Orang Tua"
+npm run user -- add-teacher guru@contoh.id "Nama Guru"
 npm run user -- reset-password dokter@contoh.id
 npm run user -- list
 npm run user -- claim ibu@contoh.id
@@ -45,10 +47,12 @@ Semua rute selain `/api/auth/*` membutuhkan login.
 
 | Metode | Rute | Keterangan |
 | --- | --- | --- |
-| POST | `/api/auth/register` | Daftar akun orang tua `{ name, login, password }` |
+| POST | `/api/auth/register` | Daftar akun orang tua atau guru `{ role: "ortu" \| "guru", name, login, password }` |
 | POST | `/api/auth/login` | Masuk `{ login, password }` |
 | POST | `/api/auth/logout` | Keluar |
 | GET | `/api/auth/me` | Akun yang sedang masuk |
+| POST | `/api/students` | Guru menambahkan murid `{ code }` |
+| DELETE | `/api/students/:childId` | Guru menghapus murid dari daftarnya |
 | POST | `/api/demo` | Buat data contoh untuk akun orang tua yang masih kosong |
 | GET | `/api/state` | Anak beserta sesinya dan daftar video per sesi (orang tua: anaknya sendiri; dokter: semua, tanpa nama) |
 | PUT | `/api/children/:id` | Buat/ubah anak. Kirim `If-Match: <rev>` saat mengubah; 409 bila sudah diubah perangkat lain |
@@ -58,5 +62,3 @@ Semua rute selain `/api/auth/*` membutuhkan login.
 | POST | `/api/sessions/:sid/videos` | Unggah video (badan = berkas mentah, `Content-Type: video/*`, `X-Filename`). Hanya bila orang tua menyetujui perekaman |
 | GET | `/api/videos/:id` | Putar video (mendukung `Range`) |
 | DELETE | `/api/videos/:id` | Hapus video |
-
-Peran guru PAUD belum memiliki akun; izin "pengisian oleh guru" pada persetujuan belum dipakai.

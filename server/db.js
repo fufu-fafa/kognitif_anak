@@ -43,7 +43,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     login TEXT NOT NULL UNIQUE,
-    role TEXT NOT NULL CHECK (role IN ('ortu', 'dokter')),
+    role TEXT NOT NULL CHECK (role IN ('ortu', 'guru', 'dokter')),
     name TEXT NOT NULL,
     pass TEXT NOT NULL,
     created_at INTEGER NOT NULL
@@ -59,6 +59,25 @@ if (!db.prepare("PRAGMA table_info(children)").all().some(c => c.name === "owner
   db.exec("ALTER TABLE children ADD COLUMN owner_id TEXT REFERENCES users(id) ON DELETE CASCADE");
 }
 db.exec("CREATE INDEX IF NOT EXISTS children_owner ON children(owner_id)");
+/* Database lama hanya mengizinkan peran ortu/dokter; bangun ulang tabel users agar peran guru diterima. */
+if (!/'guru'/.test(db.prepare("SELECT sql FROM sqlite_master WHERE name = 'users'").get().sql)) {
+  db.exec(`PRAGMA foreign_keys = OFF;
+    BEGIN;
+    CREATE TABLE users_new (id TEXT PRIMARY KEY, login TEXT NOT NULL UNIQUE,
+      role TEXT NOT NULL CHECK (role IN ('ortu', 'guru', 'dokter')), name TEXT NOT NULL, pass TEXT NOT NULL, created_at INTEGER NOT NULL);
+    INSERT INTO users_new SELECT id, login, role, name, pass, created_at FROM users;
+    DROP TABLE users;
+    ALTER TABLE users_new RENAME TO users;
+    COMMIT;
+    PRAGMA foreign_keys = ON;`);
+}
+/* Murid guru PAUD: guru menambahkan anak dengan kode anak; akses berlaku selama orang tua mengizinkan guru. */
+db.exec(`CREATE TABLE IF NOT EXISTS guru_students (
+    guru_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    child_id TEXT NOT NULL REFERENCES children(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (guru_id, child_id)
+  )`);
 
 const q = {
   children: db.prepare("SELECT id, doc, rev, owner_id FROM children ORDER BY created_at"),
@@ -84,7 +103,12 @@ const q = {
   authUser: db.prepare("SELECT u.id, u.login, u.role, u.name FROM auth_sessions a JOIN users u ON u.id = a.user_id WHERE a.token_hash = ? AND a.expires_at > ?"),
   delAuth: db.prepare("DELETE FROM auth_sessions WHERE token_hash = ?"),
   delAuthOfUser: db.prepare("DELETE FROM auth_sessions WHERE user_id = ?"),
-  purgeAuth: db.prepare("DELETE FROM auth_sessions WHERE expires_at <= ?")
+  purgeAuth: db.prepare("DELETE FROM auth_sessions WHERE expires_at <= ?"),
+  childByCode: db.prepare("SELECT id, doc, owner_id FROM children WHERE json_extract(doc, '$.code') = ?"),
+  studentsOf: db.prepare("SELECT child_id FROM guru_students WHERE guru_id = ?"),
+  isStudent: db.prepare("SELECT 1 AS ok FROM guru_students WHERE guru_id = ? AND child_id = ?"),
+  addStudent: db.prepare("INSERT OR IGNORE INTO guru_students (guru_id, child_id, created_at) VALUES (?, ?, ?)"),
+  delStudent: db.prepare("DELETE FROM guru_students WHERE guru_id = ? AND child_id = ?")
 };
 
 /* Transaksi boleh bersarang; hanya yang terluar yang membuka dan menutup transaksi SQLite. */
@@ -98,12 +122,21 @@ function tx(fn) {
 const videoPath = id => path.join(VIDEO_DIR, id);
 function unlinkVideos(ids) { ids.forEach(id => fs.rm(videoPath(id), { force: true }, () => {})); }
 
+/* Apakah pengguna boleh melihat anak ini. Guru hanya selama anak ada di daftar muridnya dan orang tua mengizinkan guru. */
+function canSee(user, row, doc) {
+  if (user.role === "dokter") return true;
+  if (user.role === "ortu") return row.owner_id === user.id;
+  if (user.role === "guru") return !!(doc.consent && doc.consent.guru && q.isStudent.get(user.id, row.id));
+  return false;
+}
 /* Data dalam bentuk yang dipakai app.js: anak beserta sesinya, plus daftar video per sesi.
-   Orang tua hanya menerima anaknya sendiri; dokter menerima semua anak tanpa nama anak dan nama wali. */
+   Orang tua menerima anaknya sendiri; guru menerima muridnya tanpa nama wali;
+   dokter menerima semua anak tanpa nama anak dan nama wali. */
 function state(user) {
-  const kids = q.children.all().filter(r => user.role === "dokter" || r.owner_id === user.id).map(r => {
+  const kids = q.children.all().filter(r => canSee(user, r, JSON.parse(r.doc))).map(r => {
     const doc = JSON.parse(r.doc);
-    if (user.role === "dokter") { doc.name = ""; if (doc.consent) doc.consent = { ...doc.consent, wali: "" }; }
+    if (user.role === "dokter") doc.name = "";
+    if (user.role !== "ortu" && doc.consent) doc.consent = { ...doc.consent, wali: "" };
     return { ...doc, rev: r.rev, sessions: [] };
   });
   const byId = new Map(kids.map(c => [c.id, c]));
@@ -117,6 +150,7 @@ const publicVideo = v => ({ id: v.id, name: v.name, mime: v.mime, size: v.size, 
 
 class Conflict extends Error { constructor(cur) { super("conflict"); this.current = cur; } }
 class NotFound extends Error { constructor(what) { super(what + " tidak ditemukan"); } }
+class CodeTaken extends Error { constructor() { super("Kode anak sudah dipakai."); } }
 
 /* rev = null berarti rekaman baru; selain itu harus sama dengan rev di server. */
 function putChild(id, doc, rev, ownerId) {
@@ -124,10 +158,12 @@ function putChild(id, doc, rev, ownerId) {
     const cur = q.child.get(id), now = Date.now();
     if (!cur) {
       if (rev != null) throw new NotFound("Anak");
+      if (q.childByCode.get(doc.code)) throw new CodeTaken();
       q.insChild.run(id, JSON.stringify(doc), ownerId, now, now);
       return 1;
     }
     if (cur.owner_id !== ownerId) throw new NotFound("Anak");
+    if (JSON.parse(cur.doc).code !== doc.code) throw new Error("Kode anak tidak dapat diubah.");
     if (rev !== cur.rev) throw new Conflict({ ...JSON.parse(cur.doc), rev: cur.rev });
     q.updChild.run(JSON.stringify(doc), now, id);
     return cur.rev + 1;
@@ -169,6 +205,12 @@ function deleteSession(id) {
 const getSession = id => q.session.get(id);
 function getChild(id) { const r = q.child.get(id); return r ? { ...JSON.parse(r.doc), owner_id: r.owner_id } : null; }
 const countOwned = ownerId => q.children.all().filter(r => r.owner_id === ownerId).length;
+function childRow(id) { const r = q.child.get(id); return r ? { row: r, doc: JSON.parse(r.doc) } : null; }
+function canSeeChild(user, id) { const c = childRow(id); return !!c && canSee(user, c.row, c.doc); }
+const childByCode = code => { const r = q.childByCode.get(code); return r ? { id: r.id, doc: JSON.parse(r.doc) } : null; };
+const codeTaken = code => !!q.childByCode.get(code);
+const addStudent = (guruId, childId) => q.addStudent.run(guruId, childId, Date.now()).changes > 0;
+const removeStudent = (guruId, childId) => q.delStudent.run(guruId, childId).changes > 0;
 
 /* ---------- akun dan sesi masuk ---------- */
 const userByLogin = login => q.userByLogin.get(login);
@@ -189,4 +231,4 @@ function deleteVideo(id) {
   return n > 0;
 }
 
-module.exports = { db, tx, DATA_DIR, VIDEO_DIR, videoPath, state, getChild, countOwned, userByLogin, addUser, setPassword, addAuth, authUser, delAuth, putChild, deleteChild, putSession, deleteSession, getSession, getVideo, addVideo, deleteVideo, Conflict, NotFound };
+module.exports = { db, tx, DATA_DIR, VIDEO_DIR, videoPath, state, getChild, countOwned, canSeeChild, childByCode, codeTaken, addStudent, removeStudent, CodeTaken, userByLogin, addUser, setPassword, addAuth, authUser, delAuth, putChild, deleteChild, putSession, deleteSession, getSession, getVideo, addVideo, deleteVideo, Conflict, NotFound };

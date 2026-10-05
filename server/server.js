@@ -3,7 +3,7 @@
    Jalankan: npm start  (lalu buka http://localhost:3000)
    Variabel lingkungan: PORT (3000), HOST (127.0.0.1; pakai 0.0.0.0 agar dapat dibuka dari perangkat lain di jaringan),
    COGNITRACK_DATA (folder data/), MAX_VIDEO_MB (300), ALLOW_REGISTER (1; 0 = orang tua tidak dapat mendaftar sendiri).
-   Akun dokter dibuat lewat baris perintah: npm run user -- add-doctor <email/HP> "<nama>" */
+   Orang tua dan guru PAUD mendaftar sendiri; akun dokter dibuat lewat baris perintah: npm run user -- add-doctor <email/HP> "<nama>" */
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -96,6 +96,7 @@ function wrapStore(fn) {
   catch (e) {
     if (e instanceof store.Conflict) throw new HttpError(409, "Data sudah diubah di perangkat lain.", { current: e.current });
     if (e instanceof store.NotFound) throw new HttpError(404, e.message);
+    if (e instanceof store.CodeTaken) throw new HttpError(409, e.message, { codeTaken: true });
     if (e.message && !e.code) throw new HttpError(422, e.message);
     throw e;
   }
@@ -110,17 +111,19 @@ function same(a, b) {
 }
 const without = (o, ...keys) => { const c = { ...o }; keys.forEach(k => delete c[k]); return c; };
 const forbid = msg => { throw new HttpError(403, msg); };
-/* Orang tua mengisi dan mengirim skrining anaknya sendiri; dokter hanya menetapkan hasil atau meminta rekam ulang. */
+/* Orang tua dan guru PAUD (muridnya) mengisi dan mengirim skrining; dokter hanya menetapkan hasil atau meminta rekam ulang. */
+const FILLERS = ["ortu", "guru"];
 function sessionGuard(user, doc) {
   return (child, old) => {
-    if (user.role === "ortu") {
-      if (child.owner_id !== user.id) throw new HttpError(404, "Anak tidak ditemukan.");
+    if (FILLERS.includes(user.role)) {
+      if (!store.canSeeChild(user, child.id)) throw new HttpError(404, "Anak tidak ditemukan.");
       if (!old || old.status === "draft") {
         if (doc.status === "terverifikasi" || doc.verify || doc.rerecord) forbid("Hanya dokter yang dapat menetapkan hasil.");
-        if (doc.by !== "ortu") forbid("Pengisi sesi tidak valid.");
+        /* Pengisi dicatat saat sesi dibuat dan tidak berubah, walau orang tua melanjutkan draf guru atau sebaliknya. */
+        if (doc.by !== (old ? old.by : user.role)) forbid("Pengisi sesi tidak valid.");
         return;
       }
-      /* Setelah dikirim, orang tua hanya dapat menandai bahwa video rekam ulang sudah dikirim. */
+      /* Setelah dikirim, pengisi hanya dapat menandai bahwa video rekam ulang sudah dikirim. */
       const rr = old.rerecord;
       const okRR = rr && !rr.resubmittedAt && doc.rerecord && Number.isFinite(doc.rerecord.resubmittedAt) && same(without(doc.rerecord, "resubmittedAt"), without(rr, "resubmittedAt"));
       if (old.status === "menunggu" && okRR && same(without(doc, "rerecord"), without(old, "rerecord"))) return;
@@ -141,13 +144,13 @@ function sessionGuard(user, doc) {
 /* Sesi beserta anaknya, bila pengguna boleh melihatnya. */
 function sessionFor(user, sid) {
   const sess = store.getSession(sid), child = sess && store.getChild(sess.child_id);
-  if (!sess || !child || (user.role !== "dokter" && child.owner_id !== user.id)) throw new HttpError(404, "Sesi tidak ditemukan.");
+  if (!sess || !child || !store.canSeeChild(user, child.id)) throw new HttpError(404, "Sesi tidak ditemukan.");
   return { sess, child, doc: JSON.parse(sess.doc) };
 }
 
 /* ---------- video ---------- */
 function receiveVideo(req, user, sid) {
-  if (user.role !== "ortu") forbid("Hanya orang tua yang dapat mengunggah video.");
+  if (!FILLERS.includes(user.role)) forbid("Hanya orang tua atau guru yang dapat mengunggah video.");
   const { sess } = sessionFor(user, sid);
   if (sess.status === "terverifikasi") throw new HttpError(409, "Sesi sudah diverifikasi; video tidak dapat ditambahkan.");
   const child = store.getChild(sess.child_id);
@@ -206,6 +209,9 @@ function streamVideo(req, res, user, id) {
 }
 
 /* ---------- API ---------- */
+const codeFail = new Map(), MAX_CODE_FAIL = 10, CODE_WINDOW = 3600e3;
+function codeFails(uid) { const f = codeFail.get(uid); return f && Date.now() - f.at < CODE_WINDOW ? f.n : 0; }
+function noteCodeFail(uid) { const n = codeFails(uid); codeFail.set(uid, { n: n + 1, at: n ? codeFail.get(uid).at : Date.now() }); }
 const publicUser = u => ({ id: u.id, login: u.login, role: u.role, name: u.name });
 function signIn(req, res, user, token, code = 200) {
   res.setHeader("Set-Cookie", auth.setCookie(req, token));
@@ -230,7 +236,8 @@ async function api(req, res, parts) {
       if (!ALLOW_REGISTER) throw new HttpError(403, "Pendaftaran akun baru sedang ditutup.");
       const body = await readJSON(req) || {};
       let u;
-      try { u = auth.createUser({ login: body.login, name: body.name, password: body.password, role: "ortu" }); }
+      const role = body.role === "guru" ? "guru" : "ortu";
+      try { u = auth.createUser({ login: body.login, name: body.name, password: body.password, role }); }
       catch (e) { throw new HttpError(422, e.message); }
       return signIn(req, res, u, auth.startSession(u.id), 201);
     }
@@ -245,6 +252,23 @@ async function api(req, res, parts) {
   const user = auth.userOf(req);
   if (!user) throw new HttpError(401, "Sesi masuk berakhir. Silakan masuk lagi.");
   const ortu = () => { if (user.role !== "ortu") forbid("Hanya orang tua yang dapat melakukan ini."); };
+  const filler = () => { if (!FILLERS.includes(user.role)) forbid("Hanya orang tua atau guru yang dapat melakukan ini."); };
+
+  /* Guru menambahkan murid dengan kode anak. Percobaan kode yang salah dibatasi agar kode tidak bisa ditebak. */
+  if (a === "students" && user.role === "guru") {
+    if (!id && M === "POST") {
+      if (codeFails(user.id) >= MAX_CODE_FAIL) throw new HttpError(429, "Terlalu banyak kode yang salah. Coba lagi 1 jam lagi.");
+      const body = await readJSON(req) || {};
+      const raw = String(body.code || "").toUpperCase().replace(/\s+/g, "");
+      const code = /^CT-?[A-Z0-9]{4}$/.test(raw) ? "CT-" + raw.slice(-4) : /^[A-Z0-9]{4}$/.test(raw) ? "CT-" + raw : "";
+      const ch = code && store.childByCode(code);
+      if (!ch) { noteCodeFail(user.id); throw new HttpError(404, "Kode anak tidak ditemukan. Periksa lagi kode dari orang tua."); }
+      if (!ch.doc.consent || !ch.doc.consent.guru) throw new HttpError(403, "Orang tua belum mengizinkan guru PAUD mengisi checklist untuk anak ini. Minta orang tua mengubah persetujuan di CogniTrack.");
+      store.addStudent(user.id, ch.id);
+      return send(res, 201, { child: ch.id });
+    }
+    if (id && ID.test(id) && !b && M === "DELETE") return send(res, store.removeStudent(user.id, id) ? 200 : 404, { ok: true });
+  }
 
   if (a === "state" && M === "GET" && !id) return send(res, 200, store.state(user));
 
@@ -279,7 +303,7 @@ async function api(req, res, parts) {
 
   if (a === "sessions" && id && ID.test(id)) {
     if (!b && M === "DELETE") {
-      ortu();
+      filler();
       const { sess } = sessionFor(user, id);
       if (sess.status !== "draft") forbid("Hanya skrining yang belum dikirim yang dapat dibatalkan.");
       store.deleteSession(id);
@@ -291,7 +315,7 @@ async function api(req, res, parts) {
   if (a === "videos" && id && ID.test(id) && !b) {
     if (M === "GET" || M === "HEAD") return streamVideo(req, res, user, id);
     if (M === "DELETE") {
-      ortu();
+      filler();
       const v = store.getVideo(id);
       if (!v) throw new HttpError(404, "Video tidak ditemukan.");
       const { doc } = sessionFor(user, v.session_id), rr = doc.rerecord;

@@ -134,6 +134,11 @@ async function flush() {
   } catch (e) {
     net.offline = !!e.offline;
     if (e.offline) { net.err = "Server tidak dapat dihubungi. Perubahan akan dikirim ulang otomatis."; net.timer = setTimeout(flush, 5000); }
+    else if (e.status === 409 && e.body && e.body.codeTaken) {
+      /* Kode anak bentrok dengan anak lain di server: buat kode baru lalu kirim ulang. */
+      const k = [...records().keys()].find(k => k[0] === "c" && !net.synced.has(k)), ch = k && data.children.find(x => "c:" + x.id === k);
+      if (ch) { ch.code = newCode(); net.again = true; }
+    }
     else {
       net.err = e.status === 409 ? "Data ini baru saja diubah di perangkat lain. Tampilan dimuat ulang; periksa lagi perubahan terakhir Anda." : "Perubahan tidak tersimpan: " + e.message;
       try { await pull(); } catch (x) {}
@@ -247,7 +252,7 @@ function header() {
   const r = data.role, kids = visibleKids(), c = child();
   const kidSel = r !== "dokter" && kids.length > 1
     ? `<select class="sel" data-act="switch" aria-label="Pilih anak">${kids.map(x => `<option value="${x.id}" ${c && x.id === c.id ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select>` : "";
-  const add = r === "ortu" && kids.length && !ui.adding ? `<button class="btn sm" data-act="showadd">Tambah anak</button>` : "";
+  const add = (r === "ortu" || r === "guru") && kids.length && !ui.adding ? `<button class="btn sm" data-act="showadd">${r === "guru" ? "Tambah murid" : "Tambah anak"}</button>` : "";
   return `<header class="top noprint">
     <div class="brand">
       <svg viewBox="0 0 34 34" aria-hidden="true"><circle cx="17" cy="17" r="15" fill="none" stroke="var(--d0)" stroke-width="3"/><circle cx="17" cy="17" r="9.5" fill="none" stroke="var(--d1)" stroke-width="3" stroke-dasharray="40 100" stroke-linecap="round"/><circle cx="17" cy="17" r="4" fill="var(--d2)"/></svg>
@@ -304,6 +309,19 @@ function viewAdd() {
       ${first ? "" : `<button class="btn" data-act="canceladd">Batal</button>`}
     </div>
     ${first ? `<p class="small muted" style="margin-top:16px">Ingin melihat alurnya dulu? <button class="linkbtn" data-act="demo">Isi data contoh (dummy)</button></p>` : ""}
+  </section>`;
+}
+function viewAddStudent() {
+  const first = visibleKids().length === 0;
+  return `<section class="card narrow">
+    <h1 class="title">${first ? "Tambahkan murid pertama" : "Tambah murid"}</h1>
+    <p class="muted" style="margin-bottom:14px">Minta kode anak kepada orang tua. Kode ada di Beranda aplikasi orang tua, misalnya <b>CT-7KQ2</b>. Anak hanya dapat ditambahkan bila orang tua mengizinkan guru PAUD mengisi checklist.</p>
+    ${ui.err ? `<p class="err" role="alert">${esc(ui.err)}</p>` : ""}
+    <div class="field"><label for="kode">Kode anak</label><input id="kode" type="text" maxlength="12" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="CT-XXXX" value="${esc(ui.code || "")}" data-in-code></div>
+    <div class="row">
+      <button class="btn pri" data-act="addstudent" ${ui.busy ? "disabled" : ""}>Tambahkan</button>
+      ${first ? "" : `<button class="btn" data-act="canceladd">Batal</button>`}
+    </div>
   </section>`;
 }
 function viewConsent(c) {
@@ -429,13 +447,21 @@ function viewBeranda(c) {
         <dt>Orang tua/wali</dt><dd>${esc(cs.wali)} (${esc(cs.rel)}) · disetujui ${fmtDate(cs.at)}</dd>
         <dt>Perekaman video</dt><dd>${cs.video ? "Disetujui" : "Tidak disetujui"}</dd>
         <dt>Pengisian oleh guru</dt><dd>${cs.guru ? "Diizinkan" : "Tidak diizinkan"}</dd>
+        <dt>Kode anak</dt><dd><b class="code">${esc(c.code)}</b></dd>
       </dl>
+      <p class="small muted" style="margin-top:8px">${cs.guru ? "Berikan kode anak ini kepada guru PAUD agar guru dapat menambahkan anak ke daftar muridnya. Guru tidak lagi dapat membuka data anak bila izin pengisian oleh guru dicabut."
+        : "Untuk mengizinkan guru PAUD mengisi checklist, ubah persetujuan lalu berikan kode anak kepada guru."}</p>
       <div class="row">
         <button class="btn sm" data-act="editconsent">Ubah persetujuan</button>
         ${ui.confirm === "delchild"
           ? `<span class="small">Hapus semua data dan video ${esc(c.name)}?</span><button class="btn sm danger" data-act="delyes">Ya, hapus</button><button class="btn sm" data-act="nope">Batal</button>`
           : `<button class="btn sm danger" data-act="delask">Hapus data anak</button>`}
       </div></section>` : ""}
+    ${data.role === "guru" ? `<section class="card"><h2 class="h2">Murid</h2>
+      <p class="small muted">Orang tua mengizinkan Anda mengisi checklist KPSP untuk anak ini. Akses berakhir bila orang tua mencabut izinnya.</p>
+      <div class="row">${ui.confirm === "delstudent"
+        ? `<span class="small">Hapus ${esc(c.name)} dari daftar murid Anda? Data skrining tetap tersimpan.</span><button class="btn sm danger" data-act="delstudentyes">Ya, hapus</button><button class="btn sm" data-act="nope">Batal</button>`
+        : `<button class="btn sm danger" data-act="delstudent">Hapus dari daftar murid</button>`}</div></section>` : ""}
     <p class="foot">CogniTrack adalah alat skrining dan edukasi, bukan alat diagnosis, dan tidak menggantikan Buku KIA maupun pemantauan di Posyandu atau Puskesmas.</p>
   </div>`;
 }
@@ -1029,8 +1055,8 @@ function render() {
     if (data.role === "ortu" && (!c || ui.adding)) {
       if (!ui.draft) ui.draft = blankDraft();
       body = viewAdd();
-    } else if (!c) {
-      body = `<div class="card empty"><h1 class="h2">Belum ada anak didik</h1><p class="muted">Guru PAUD hanya dapat mengisi checklist untuk anak yang orang tuanya telah memberikan izin di CogniTrack.</p></div>`;
+    } else if (data.role === "guru" && (!c || ui.adding)) {
+      body = viewAddStudent();
     } else if (!c.consent || ui.editConsent) {
       body = data.role === "ortu" ? viewConsent(c) : `<div class="card empty"><p class="muted">Menunggu persetujuan orang tua.</p></div>`;
     } else {
@@ -1060,7 +1086,10 @@ function setFollow(el) {
   } else return false;
   save(); refreshNext(dr); return true;
 }
-app.addEventListener("input", e => { if (!setFollow(e.target)) setField(e.target); });
+app.addEventListener("input", e => {
+  if (e.target.dataset.inCode !== undefined) { ui.code = e.target.value; return; }
+  if (!setFollow(e.target)) setField(e.target);
+});
 app.addEventListener("change", e => {
   const t = e.target, act = t.dataset.act;
   if (t.dataset.upload) { const files = [...t.files]; t.value = ""; return uploadVideos(t.dataset.upload, files); }
@@ -1076,7 +1105,7 @@ app.addEventListener("change", e => {
   if (t.dataset.in === "cVideo" && ui.editConsent) render();
 });
 function resetView() {
-  Object.assign(ui, { adding: false, draft: null, err: "", confirm: null, editConsent: false, report: null, vd: null, vview: null, copied: false, showText: false });
+  Object.assign(ui, { code: "", busy: false, adding: false, draft: null, err: "", confirm: null, editConsent: false, report: null, vd: null, vview: null, copied: false, showText: false });
 }
 app.addEventListener("click", e => {
   if (net.err && !net.offline) net.err = "";
@@ -1096,6 +1125,21 @@ app.addEventListener("click", e => {
   else if (act === "canceladd") { ui.adding = false; ui.draft = null; }
   else if (act === "demo") {
     req("POST", "/api/demo").then(async j => { await pull(); data.active = j.active; resetView(); ui.tab = "beranda"; savePrefs(); render(); },
+      e => { ui.err = e.message; render(); });
+    return;
+  }
+  else if (act === "addstudent") {
+    if (!(ui.code || "").trim()) { ui.err = "Isi kode anak."; }
+    else {
+      ui.busy = true;
+      req("POST", "/api/students", JSON.stringify({ code: ui.code })).then(async j => {
+        await pull(); data.active = j.child; resetView(); ui.tab = "beranda"; savePrefs(); render();
+      }, e => { ui.busy = false; ui.err = e.message; render(); });
+    }
+  }
+  else if (act === "delstudent") ui.confirm = "delstudent";
+  else if (act === "delstudentyes" && c) {
+    req("DELETE", "/api/students/" + enc(c.id)).then(async () => { await pull(); data.active = null; resetView(); savePrefs(); render(); },
       e => { ui.err = e.message; render(); });
     return;
   }
@@ -1217,31 +1261,35 @@ app.addEventListener("click", e => {
 });
 /* ---------- mulai ---------- */
 /* ---------- masuk dan daftar ---------- */
-const authUi = { mode: "login", login: "", name: "", password: "", password2: "", err: "", busy: false, note: "" };
+const authUi = { mode: "login", role: "ortu", login: "", name: "", password: "", password2: "", err: "", busy: false, note: "" };
 function viewAuth() {
   const reg = authUi.mode === "register";
   return `<header class="top"><div class="brand">
       <svg viewBox="0 0 34 34" aria-hidden="true"><circle cx="17" cy="17" r="15" fill="none" stroke="var(--d0)" stroke-width="3"/><circle cx="17" cy="17" r="9.5" fill="none" stroke="var(--d1)" stroke-width="3" stroke-dasharray="40 100" stroke-linecap="round"/><circle cx="17" cy="17" r="4" fill="var(--d2)"/></svg>
       <b>CogniTrack</b></div></header>
     <main><form class="card narrow" data-auth novalidate>
-      <h1 class="title">${reg ? "Daftar sebagai orang tua" : "Masuk"}</h1>
-      <p class="muted" style="margin-bottom:14px">${reg ? "Buat akun untuk menyimpan data skrining anak Anda. Akun dokter dibuat oleh pengelola CogniTrack."
-        : "Masuk sebagai orang tua atau dokter. Dokter melihat kode anak, bukan namanya."}</p>
+      <h1 class="title">${reg ? "Buat akun" : "Masuk"}</h1>
+      <p class="muted" style="margin-bottom:14px">${reg ? "Orang tua menyimpan data skrining anaknya. Guru PAUD mengisi checklist untuk murid yang orang tuanya sudah memberi izin. Akun dokter dibuat oleh pengelola CogniTrack."
+        : "Masuk sebagai orang tua, guru PAUD, atau dokter."}</p>
       ${authUi.note ? `<p class="note info small" style="margin-bottom:12px">${esc(authUi.note)}</p>` : ""}
       ${authUi.err ? `<p class="err" role="alert">${esc(authUi.err)}</p>` : ""}
-      ${reg ? `<div class="field"><label for="an">Nama Anda</label><input id="an" type="text" maxlength="60" autocomplete="name" value="${esc(authUi.name)}" data-auth-in="name"></div>` : ""}
+      ${reg ? `<fieldset class="fs-radio" style="margin-bottom:14px"><legend>Daftar sebagai</legend>
+        <label class="chk"><input type="radio" name="arole" value="ortu" data-auth-in="role" ${authUi.role !== "guru" ? "checked" : ""}> Orang tua atau wali</label>
+        <label class="chk"><input type="radio" name="arole" value="guru" data-auth-in="role" ${authUi.role === "guru" ? "checked" : ""}> Guru PAUD</label>
+      </fieldset>` : ""}
+      ${reg ? `<div class="field"><label for="an">${authUi.role === "guru" ? "Nama guru" : "Nama Anda"}</label><input id="an" type="text" maxlength="60" autocomplete="name" value="${esc(authUi.name)}" data-auth-in="name"></div>` : ""}
       <div class="field"><label for="al">Email atau nomor HP</label><input id="al" type="text" maxlength="200" autocomplete="username" inputmode="email" value="${esc(authUi.login)}" data-auth-in="login"></div>
       <div class="field"><label for="ap">Kata sandi</label><input id="ap" type="password" maxlength="200" autocomplete="${reg ? "new-password" : "current-password"}" value="${esc(authUi.password)}" data-auth-in="password">${reg ? `<p class="small muted">Minimal 8 karakter.</p>` : ""}</div>
       ${reg ? `<div class="field"><label for="ap2">Ulangi kata sandi</label><input id="ap2" type="password" maxlength="200" autocomplete="new-password" value="${esc(authUi.password2)}" data-auth-in="password2"></div>` : ""}
       <div class="row"><button class="btn pri" type="submit" ${authUi.busy ? "disabled" : ""}>${reg ? "Daftar" : "Masuk"}</button></div>
       ${canRegister || reg ? `<p class="small muted" style="margin-top:16px">${reg ? `Sudah punya akun? <button class="linkbtn" type="button" data-auth-mode="login">Masuk</button>`
-        : `Orang tua yang belum punya akun? <button class="linkbtn" type="button" data-auth-mode="register">Daftar</button>`}</p>` : ""}
+        : `Orang tua atau guru PAUD yang belum punya akun? <button class="linkbtn" type="button" data-auth-mode="register">Daftar</button>`}</p>` : ""}
     </form>
     <p class="foot">CogniTrack adalah alat skrining dan edukasi, bukan alat diagnosis.</p></main>`;
 }
 function renderAuth() {
   app.innerHTML = viewAuth();
-  const f = app.querySelector(authUi.err ? "[data-auth-in=password]" : "[data-auth-in]"); if (f && !authUi.busy) f.focus();
+  const f = app.querySelector(authUi.err ? "[data-auth-in=password]" : "input[data-auth-in]:not([type=radio])"); if (f && !authUi.busy) f.focus();
 }
 async function submitAuth() {
   const reg = authUi.mode === "register";
@@ -1255,7 +1303,7 @@ async function submitAuth() {
   authUi.busy = true; renderAuth();
   try {
     const j = await req("POST", reg ? "/api/auth/register" : "/api/auth/login",
-      JSON.stringify(reg ? { name: authUi.name, login: authUi.login, password: authUi.password } : { login: authUi.login, password: authUi.password }));
+      JSON.stringify(reg ? { role: authUi.role === "guru" ? "guru" : "ortu", name: authUi.name, login: authUi.login, password: authUi.password } : { login: authUi.login, password: authUi.password }));
     Object.assign(authUi, { password: "", password2: "", err: "", note: "", busy: false });
     await signedIn(j.user);
   } catch (e) {
@@ -1264,6 +1312,7 @@ async function submitAuth() {
 }
 app.addEventListener("submit", e => { if (e.target.matches("[data-auth]")) { e.preventDefault(); submitAuth(); } });
 app.addEventListener("input", e => { const k = e.target.dataset.authIn; if (k) authUi[k] = e.target.value; });
+app.addEventListener("change", e => { if (e.target.dataset.authIn === "role") { authUi.role = e.target.value; renderAuth(); } });
 app.addEventListener("click", e => {
   const b = e.target.closest("[data-auth-mode]"); if (!b) return;
   Object.assign(authUi, { mode: b.dataset.authMode, err: "", note: "", password: "", password2: "" }); renderAuth();

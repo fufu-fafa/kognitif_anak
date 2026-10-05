@@ -30,7 +30,8 @@ function seedDemo(owner, KPSP) {
   const formFor = r => ages.filter(f => f <= r).pop();
   const now = Date.now(), today = isoOf(new Date());
   const consent = { wali: "Orang tua contoh", rel: "Ibu", at: today, data: true, video: true, guru: true };
-  const mk = (name, dob) => ({ id: uid("c"), code: newCode(), name, dob, prem: false, consent: { ...consent }, demo: true });
+  const freeCode = () => { let c; do c = newCode(); while (store.codeTaken(c)); return c; };
+  const mk = (name, dob) => ({ id: uid("c"), code: freeCode(), name, dob, prem: false, consent: { ...consent }, demo: true });
   const a = mk("Contoh Rara", isoAgo(26, 5)), b = mk("Contoh Bima", isoAgo(10, 20)), d = mk("Contoh Sinta", isoAgo(19, 5));
 
   const sa = { id: uid("s"), at: isoAgo(0, 3), form: 24, age: ageParts(a.dob, isoAgo(0, 3)), by: "ortu", step: "video", video: true,

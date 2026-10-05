@@ -2,6 +2,7 @@
 /* Kelola akun dari baris perintah (server boleh sedang berjalan).
      npm run user -- add-doctor <email/HP> "<nama dokter>"
      npm run user -- add-parent <email/HP> "<nama>"
+     npm run user -- add-teacher <email/HP> "<nama>"
      npm run user -- reset-password <email/HP>
      npm run user -- claim <email/HP>       (anak dari sebelum ada login diberikan ke akun orang tua ini)
      npm run user -- list
@@ -42,10 +43,11 @@ async function newPassword() {
 
 async function main() {
   const [cmd, login, name] = process.argv.slice(2);
-  if (cmd === "add-doctor" || cmd === "add-parent") {
+  if (cmd === "add-doctor" || cmd === "add-parent" || cmd === "add-teacher") {
     if (!login || !name) throw new Error(`Pakai: npm run user -- ${cmd} <email/HP> "<nama>"`);
-    const u = auth.createUser({ login, name, role: cmd === "add-doctor" ? "dokter" : "ortu", password: await newPassword() });
-    console.log(`Akun ${u.role === "dokter" ? "dokter" : "orang tua"} dibuat: ${u.login} (${u.name})`);
+    const role = { "add-doctor": "dokter", "add-parent": "ortu", "add-teacher": "guru" }[cmd];
+    const u = auth.createUser({ login, name, role, password: await newPassword() });
+    console.log(`Akun ${{ dokter: "dokter", ortu: "orang tua", guru: "guru PAUD" }[role]} dibuat: ${u.login} (${u.name})`);
   } else if (cmd === "reset-password") {
     const u = login && store.userByLogin(auth.normLogin(login));
     if (!u) throw new Error("Akun tidak ditemukan.");
@@ -65,6 +67,7 @@ async function main() {
     console.log(`Perintah:
   add-doctor <email/HP> "<nama>"   buat akun dokter
   add-parent <email/HP> "<nama>"   buat akun orang tua
+  add-teacher <email/HP> "<nama>"  buat akun guru PAUD
   reset-password <email/HP>        ganti kata sandi
   claim <email/HP>                 berikan data anak dari sebelum ada login ke akun orang tua ini
   list                             daftar akun`);
