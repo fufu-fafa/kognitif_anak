@@ -338,7 +338,7 @@ function viewAddStudent() {
   const first = visibleKids().length === 0;
   return `<section class="card narrow">
     <h1 class="title">${first ? "Tambahkan murid pertama" : "Tambah murid"}</h1>
-    <p class="muted" style="margin-bottom:14px">Minta kode anak kepada orang tua. Kode ada di Beranda aplikasi orang tua, misalnya <b>CT-7KQ2</b>. Anak hanya dapat ditambahkan bila orang tua mengizinkan guru PAUD mengisi checklist.</p>
+    <p class="lede" style="margin-bottom:16px">Minta kode anak kepada orang tua. Kode ada di Beranda aplikasi orang tua, misalnya <b>CT-7KQ2</b>. Anak hanya dapat ditambahkan bila orang tua mengizinkan guru PAUD mengisi checklist.</p>
     ${ui.err ? `<p class="err" role="alert">${esc(ui.err)}</p>` : ""}
     <div class="field"><label for="kode">Kode anak</label><input id="kode" type="text" maxlength="12" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="CT-XXXX" value="${esc(ui.code || "")}" data-in-code></div>
     <div class="row">
@@ -402,7 +402,7 @@ function uploader(s, canDelete) {
   return `<label class="btn ${list.length ? "" : "pri"}${up ? " disabled" : ""}">${list.length ? "Tambah video" : "Rekam atau pilih video"}<input type="file" accept="video/*" multiple data-upload="${s.id}" ${up ? "disabled" : ""}></label>
     ${up ? `<p class="small" role="status">Mengunggah video ${up.idx + 1} dari ${up.total}, ${up.pct}%</p>` : ""}
     ${uploadErr && uploadErr.sid === s.id ? `<p class="err" role="alert">${esc(uploadErr.msg)}</p>` : ""}
-    ${list.length ? `<ul class="vlist">${list.map(v => `<li><span class="vn">${esc(v.name)} <span class="small muted">· ${fmtSize(v.size)}</span></span>${canDelete || (s.rerecord && v.at > s.rerecord.at && !s.rerecord.resubmittedAt) ? `<button class="btn sm danger" data-act="vdel" data-s="${s.id}" data-v="${v.id}">Hapus</button>` : `<span class="small muted">terkirim</span>`}</li>`).join("")}</ul>` : ""}`;
+    ${list.length ? `<ul class="vlist">${list.map(v => `<li><span class="vn">${esc(v.name)} <span class="small muted">${fmtSize(v.size)}</span></span>${canDelete || (s.rerecord && v.at > s.rerecord.at && !s.rerecord.resubmittedAt) ? `<button class="btn sm danger" data-act="vdel" data-s="${s.id}" data-v="${v.id}">Hapus</button>` : `<span class="small muted">terkirim</span>`}</li>`).join("")}</ul>` : ""}`;
 }
 let uploadErr = null;
 function putVideo(sid, f, onProgress) {
@@ -973,13 +973,14 @@ function viewRealVideos(c, s, back) {
   const editable = vv.back === "verify" && ui.vd && ui.vd.sid === s.id && s.status === "menunggu";
   const rows = cl.map(i => {
     const fin = editable ? ui.vd.final[i] : s.verify ? s.verify.final[i] : null;
-    return `<article class="item vrow2 ${fin !== null && fin !== s.answers[i] ? "corr" : ""}" data-vrow="${i}">
+    return `<article class="item vrow2 ${fin !== null && fin !== s.answers[i] ? "corr" : ""}" data-vrow="${i}"><span class="num" aria-hidden="true">${i + 1}</span><div class="item-b">
       ${itemHead(items[i], i)}
-      <p class="small">${esc(itemShort(items[i]))}</p>
+      <p>${esc(itemShort(items[i]))}</p>
       <div class="vans"><span class="small">Pengguna: <b>${s.answers[i] ? "Ya" : "Tidak"}</b></span>
         ${editable ? `<span class="small">Jawaban akhir:</span>${ui.vd.rr.includes(i) ? `<span class="pill warn">menunggu rekam ulang</span>` : finalSeg(i, fin, ui.vd.nobs.includes(i))}<span class="small corr-lbl">dikoreksi</span>`
           : fin !== null ? `<span class="small">Akhir: <b>${fin ? "Ya" : "Tidak"}</b></span>` : ""}
-      </div></article>`;
+      </div>
+    </div></article>`;
   }).join("");
   return `<div class="stack">
     <div class="row" style="margin-top:0"><button class="btn sm back" data-act="vclose">${back}</button></div>
@@ -988,7 +989,7 @@ function viewRealVideos(c, s, back) {
       <div class="stack" style="gap:12px">
         <video class="vreal" src="/api/videos/${enc(v.id)}" controls playsinline preload="metadata"></video>
         ${meta([esc(v.name), fmtSize(v.size), `diunggah ${fmtTime(v.at)}`], "small")}
-        <section class="card"><h2 class="h2">Butir yang dapat direkam</h2>${rows}</section>
+        <section class="card"><h2 class="h2">Butir yang dapat direkam</h2><div class="vrows">${rows}</div></section>
       </div>
       <aside class="card clips" aria-label="Daftar video">
         <h2 class="h2">Video</h2>
@@ -1292,11 +1293,12 @@ const authUi = { mode: "login", role: "ortu", login: "", name: "", password: "",
 function viewAuth() {
   const reg = authUi.mode === "register";
   return `<header class="top"><div class="brand">
-      <svg viewBox="0 0 34 34" aria-hidden="true"><circle cx="17" cy="17" r="15" fill="none" stroke="var(--d0)" stroke-width="3"/><circle cx="17" cy="17" r="9.5" fill="none" stroke="var(--d1)" stroke-width="3" stroke-dasharray="40 100" stroke-linecap="round"/><circle cx="17" cy="17" r="4" fill="var(--d2)"/></svg>
-      <b>CogniTrack</b></div></header>
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="var(--pen)"/><path d="M7 24h18M10 24v-5M16 24V12M22 24V7" stroke="var(--on-pen)" stroke-width="3" stroke-linecap="round"/></svg>
+      CogniTrack
+    </div></header>
     <main><form class="card narrow" data-auth novalidate>
       <h1 class="title">${reg ? "Buat akun" : "Masuk"}</h1>
-      <p class="muted" style="margin-bottom:14px">${reg ? "Orang tua menyimpan data skrining anaknya. Guru PAUD mengisi checklist untuk murid yang orang tuanya sudah memberi izin. Akun dokter dibuat oleh pengelola CogniTrack."
+      <p class="lede" style="margin-bottom:16px">${reg ? "Orang tua menyimpan data skrining anaknya. Guru PAUD mengisi checklist untuk murid yang orang tuanya sudah memberi izin. Akun dokter dibuat oleh pengelola CogniTrack."
         : "Masuk sebagai orang tua, guru PAUD, atau dokter."}</p>
       ${authUi.note ? `<p class="note info small" style="margin-bottom:12px">${esc(authUi.note)}</p>` : ""}
       ${authUi.err ? `<p class="err" role="alert">${esc(authUi.err)}</p>` : ""}
