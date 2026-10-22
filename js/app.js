@@ -554,7 +554,7 @@ function viewRiwayat(c) {
     <div class="pagehead"><h1 class="title">Riwayat skrining</h1><p class="lede">Semua skrining ${esc(c.name)}. Laporan ringkas dapat dicetak atau dibawa saat konsultasi.</p></div>
     ${rows ? `<div class="card scroll"><table class="rt"><thead><tr><th>Tanggal</th><th>Formulir</th><th>Diisi oleh</th><th>Hasil</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
       : `<div class="card empty"><p class="muted">Belum ada skrining untuk ${esc(c.name)}.</p><button class="btn pri" data-act="tab" data-t="skrining">Mulai skrining</button></div>`}
-    ${data.role === "ortu" ? `<div class="row"><button class="btn sm" data-act="export">Unduh data anak (JSON)</button></div><p class="small muted">Data ekspor memakai kode anak tanpa nama, dengan struktur yang disiapkan untuk dipetakan ke format SATUSEHAT.</p>` : ""}
+    ${data.role === "ortu" ? `${ui.err ? `<p class="err" role="alert" style="margin-bottom:0">${esc(ui.err)}</p>` : ""}<div class="row"><button class="btn sm" data-act="export">${NATIVE ? "Simpan atau bagikan data anak (JSON)" : "Unduh data anak (JSON)"}</button></div><p class="small muted">Data ekspor memakai kode anak tanpa nama, dengan struktur yang disiapkan untuk dipetakan ke format SATUSEHAT.</p>` : ""}
   </div>`;
 }
 function reportText(c, s) {
@@ -618,9 +618,7 @@ function exportJSON(c) {
       verifiedAt: s.verify ? new Date(s.verify.at).toISOString() : null
     }))
   };
-  const url = URL.createObjectURL(new Blob([JSON.stringify(out, null, 2)], { type: "application/json" }));
-  const a = document.createElement("a"); a.href = url; a.download = `cognitrack-${c.code}.json`;
-  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return saveFile(`cognitrack-${c.code}.json`, JSON.stringify(out, null, 2), "application/json");
 }
 
 /* ---------- dokter ---------- */
@@ -883,6 +881,63 @@ function loadDemo() {
   data.children.push(a, b, d); data.active = a.id;
 }
 
+/* ---------- aplikasi Android (Capacitor) ---------- */
+/* Tanpa bundler: www/ memuat runtime capacitor.js, lalu plugin native didaftarkan dan dipakai lewat
+   objek global Capacitor.Plugins. Di peramban biasa window.Capacitor tidak ada, jadi semua fungsi
+   di bawah memakai perilaku web. */
+const NATIVE = !!(window.Capacitor && Capacitor.isNativePlatform && Capacitor.isNativePlatform());
+if (NATIVE) ["App", "Clipboard", "Filesystem", "Printer", "Share", "StatusBar"].forEach(n => { if (!Capacitor.Plugins[n]) Capacitor.registerPlugin(n); });
+const plugin = n => NATIVE && Capacitor.isPluginAvailable(n) ? Capacitor.Plugins[n] : null;
+
+/* Cetak: dialog cetak Android (termasuk "Simpan sebagai PDF") memakai CSS @media print yang sama. */
+function printPage(name) {
+  const P = plugin("Printer");
+  if (!P) { window.print(); return Promise.resolve(); }
+  return P.printWebView({ name });
+}
+/* Simpan berkas: di Android ditulis ke cache aplikasi lalu dibuka lewat lembar bagikan. */
+async function saveFile(name, text, type) {
+  const F = plugin("Filesystem"), S = plugin("Share");
+  if (!F || !S) {
+    const url = URL.createObjectURL(new Blob([text], { type }));
+    const a = document.createElement("a"); a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return;
+  }
+  const { uri } = await F.writeFile({ path: name, data: text, directory: "CACHE", encoding: "utf8" });
+  try { await S.share({ title: name, url: uri, dialogTitle: "Simpan atau bagikan data anak" }); }
+  catch (e) { if (!/cancel/i.test(String(e && e.message))) throw e; }
+}
+/* navigator.clipboard tidak selalu diizinkan di WebView Android, jadi di aplikasi dipakai plugin Clipboard. */
+function copyText(txt) {
+  const C = plugin("Clipboard");
+  return C ? C.write({ string: txt }) : navigator.clipboard.writeText(txt);
+}
+/* Warna status bar mengikuti meta theme-color (terang/gelap). */
+function syncStatusBar() {
+  const SB = plugin("StatusBar"); if (!SB) return;
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  const tc = document.querySelector(`meta[name="theme-color"][media*="${dark ? "dark" : "light"}"]`);
+  SB.setStyle({ style: dark ? "DARK" : "LIGHT" }).catch(() => {});
+  if (tc) SB.setBackgroundColor({ color: tc.content }).catch(() => {});
+}
+/* Tombol kembali Android: mundur satu layar di dalam aplikasi. Mengembalikan false bila sudah di
+   layar awal, sehingga aplikasi ditutup. */
+function goBack() {
+  const c = child(), dr = c && draftOf(c), home = TABS[data.role][0][0];
+  if (ui.confirm) { ui.confirm = null; render(); return true; }
+  if (ui.vview) ui.vview = null;
+  else if (ui.vd) ui.vd = null;
+  else if (ui.report) { ui.report = null; ui.showText = false; ui.copied = false; }
+  else if (ui.adding && visibleKids().length) { ui.adding = false; ui.draft = null; }
+  else if (ui.editConsent && c && c.consent) { ui.editConsent = false; ui.draft = null; }
+  else if (ui.tab === "skrining" && dr && dr.step === "video") { dr.step = "isi"; save(); }
+  else if (ui.tab !== home) { ui.tab = home; resetView(); }
+  else return false;
+  ui.err = ""; render(); window.scrollTo(0, 0);
+  return true;
+}
+
 /* ---------- render ---------- */
 const app = document.getElementById("app");
 function render() {
@@ -906,7 +961,7 @@ function render() {
     }
   }
   app.innerHTML = header() + `<main${data.role === "dokter" ? ' class="wide"' : ""}>${body}</main>
-    <p class="foot noprint">Prototype Tahap 1 (MVP). Peran dapat diganti di kanan atas untuk demonstrasi, dan semua data tersimpan di peramban perangkat ini.</p>`;
+    <p class="foot noprint">Prototype Tahap 1 (MVP). Peran dapat diganti di kanan atas untuk demonstrasi, dan semua data tersimpan di ${NATIVE ? "aplikasi pada" : "peramban"} perangkat ini.</p>`;
 }
 
 /* ---------- event ---------- */
@@ -1024,14 +1079,16 @@ app.addEventListener("click", e => {
   }
   else if (act === "report") { ui.tab = data.role === "dokter" ? ui.tab : "riwayat"; ui.report = el.dataset.s; ui.copied = false; ui.showText = false; window.scrollTo(0, 0); }
   else if (act === "closereport") { ui.report = null; ui.showText = false; ui.copied = false; }
-  else if (act === "print") { try { window.print(); } catch (x) { ui.showText = true; } }
-  else if (act === "copy") {
-    const x = findSession(el.dataset.s); if (!x) return;
-    const txt = reportText(x.c, x.s);
-    try { navigator.clipboard.writeText(txt).then(() => { ui.copied = true; render(); }, () => { ui.showText = true; render(); }); }
+  else if (act === "print") {
+    const x = findSession(ui.report);
+    try { printPage(x ? `Laporan CogniTrack ${x.c.code}` : "Laporan CogniTrack").catch(() => { ui.showText = true; render(); }); }
     catch (err) { ui.showText = true; }
   }
-  else if (act === "export" && c) exportJSON(c);
+  else if (act === "copy") {
+    const x = findSession(el.dataset.s); if (!x) return;
+    copyText(reportText(x.c, x.s)).then(() => { ui.copied = true; render(); }, () => { ui.showText = true; render(); });
+  }
+  else if (act === "export" && c) exportJSON(c).catch(() => { ui.err = "Data anak tidak dapat disimpan. Coba lagi."; render(); });
   else if (act === "review") {
     const x = findSession(el.dataset.s);
     /* Setelah rekam ulang, mulai dari keputusan sementara dokter sebelumnya. */
@@ -1073,4 +1130,10 @@ app.addEventListener("click", e => {
   else if (act === "vclose") { ui.vview = null; window.scrollTo(0, 0); }
   render();
 });
+if (NATIVE) {
+  const App = plugin("App");
+  if (App) App.addListener("backButton", () => { if (!goBack()) App.exitApp(); });
+  syncStatusBar();
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", syncStatusBar);
+}
 render();

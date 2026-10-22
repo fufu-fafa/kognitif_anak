@@ -1,0 +1,30 @@
+{
+  "name": "cognitrack",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CogniTrack: skrining perkembangan anak (KPSP) dengan verifikasi dokter.",
+  "scripts": {
+    "build": "node scripts/build-www.mjs",
+    "sync": "npm run build && cap sync android",
+    "apk": "npm run sync && node scripts/apk.mjs",
+    "assets": "capacitor-assets generate --android --iconBackgroundColor '#1f45a6' --iconBackgroundColorDark '#1f45a6' --splashBackgroundColor '#f4f6f8' --splashBackgroundColorDark '#11151c'"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.3",
+    "@capacitor/app": "^8.1.2",
+    "@capacitor/clipboard": "^8.0.1",
+    "@capacitor/core": "^8.5.3",
+    "@capacitor/filesystem": "^8.1.5",
+    "@capacitor/share": "^8.0.3",
+    "@capacitor/splash-screen": "^8.0.2",
+    "@capacitor/status-bar": "^8.0.4",
+    "@capgo/capacitor-printer": "^8.1.8"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^8.5.3"
+  },
+  "allowScripts": {
+    "sharp@0.32.6": true
+  }
+}

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Sama dengan meta theme-color terang di index.html -->
+    <color name="cognitrack_paper">#f4f6f8</color>
+</resources>

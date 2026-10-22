@@ -1,0 +1,24 @@
+{
+  "appId": "com.malik.cognitrack",
+  "appName": "CogniTrack",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false
+  },
+  "plugins": {
+    "SystemBars": {
+      "insetsHandling": "css",
+      "initialViewportFitValueHint": "cover"
+    },
+    "StatusBar": {
+      "style": "LIGHT",
+      "backgroundColor": "#f4f6f8"
+    },
+    "SplashScreen": {
+      "launchShowDuration": 600,
+      "launchAutoHide": true,
+      "backgroundColor": "#f4f6f8",
+      "showSpinner": false
+    }
+  }
+}
