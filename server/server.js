@@ -328,12 +328,12 @@ async function api(req, res, parts) {
   throw new HttpError(404, "Rute API tidak ditemukan.");
 }
 
-/* ---------- berkas statis: hanya index.html, js/, img/ ---------- */
-const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".png": "image/png", ".jpg": "image/jpeg", ".svg": "image/svg+xml", ".css": "text/css; charset=utf-8", ".ico": "image/x-icon" };
+/* ---------- berkas statis: hanya index.html, js/, img/, fonts/ ---------- */
+const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".png": "image/png", ".jpg": "image/jpeg", ".svg": "image/svg+xml", ".css": "text/css; charset=utf-8", ".ico": "image/x-icon", ".woff2": "font/woff2" };
 function serveStatic(req, res, pathname) {
   if (pathname === "/") pathname = "/index.html";
   const rel = path.normalize(decodeURIComponent(pathname)).replace(/^[/\\]+/, "");
-  const ok = rel === "index.html" || rel.startsWith("js" + path.sep) || rel.startsWith("img" + path.sep);
+  const ok = rel === "index.html" || rel.startsWith("js" + path.sep) || rel.startsWith("img" + path.sep) || rel.startsWith("fonts" + path.sep);
   const file = path.join(ROOT, rel);
   if (!ok || !file.startsWith(ROOT + path.sep)) return send(res, 404, { error: "Tidak ditemukan." });
   fs.stat(file, (err, st) => {
