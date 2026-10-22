@@ -141,6 +141,29 @@ const NOT_DIAGNOSIS = "Hasil ini adalah skrining, bukan diagnosis. Hasil “sesu
 const draftBanner = () => KPSP_DRAFT ? `<div class="note warn small"><b>Prototype.</b> Teks butir KPSP di aplikasi ini masih draf dan harus diganti dengan teks resmi Buku Bagan SDIDTK (Kemenkes RI, 2022) sebelum uji ahli.</div>` : "";
 
 /* ---------- tampilan umum ---------- */
+/* Baris keterangan: bagian dipisah jarak, bukan titik tengah. */
+const meta = (parts, cls = "") => `<p class="meta${cls ? " " + cls : ""}">${parts.filter(Boolean).map(p => `<span>${p}</span>`).join("")}</p>`;
+/* Lintasan umur: penggaris dengan tanda pada setiap kelompok umur formulir KPSP (3–72 bulan). */
+function ageTrack(rounded) {
+  const max = 72, f = formFor(rounded), next = FORM_AGES.find(x => x > rounded);
+  const x = m => (Math.max(0, Math.min(max, m)) / max * 100).toFixed(2) + "%";
+  const major = m => m % 12 === 0 || m === 3;
+  const ticks = FORM_AGES.map(m => `<span class="tick${major(m) ? "" : " minor"}${m % 12 && m !== 3 ? " mid" : ""}${m === f ? " cur" : ""}${m === next ? " nxt" : ""}" style="--x:${x(m)}"><span>${m}</span></span>`).join("");
+  return `<div class="track" role="img" aria-label="Umur ${rounded} bulan pada rentang KPSP 3 sampai 72 bulan${f ? `, formulir ${f} bulan` : ""}${next ? `, formulir berikutnya ${next} bulan` : ""}">
+    <div class="track-line"><span class="done" style="--p:${x(rounded)}"></span>${ticks}<span class="you" style="--x:${x(rounded)}"></span></div>
+    <p class="track-key"><span><i></i>Umur sekarang <b>${rounded} bulan</b></span>${f ? `<span><i class="f"></i>Formulir <b>KPSP ${f} bulan</b></span>` : ""}${next ? `<span>Skrining berikutnya pada <b>${next} bulan</b></span>` : ""}</p>
+  </div>`;
+}
+/* Skala jumlah "Ya": kotak per butir, dengan pita ambang pedoman (≤6, 7–8, 9–10). */
+function scoreScale(final) {
+  const n = final.length, y = yesCount(final), cat = category(y);
+  const col = { S: "var(--ok)", M: "var(--warn)", P: "var(--bad)" }[cat];
+  const boxes = Array.from({ length: n }, (_, i) => `<span class="${i < y ? "y" : ""}">${i + 1}</span>`).join("");
+  const bands = [["P", 6, "var(--bad)"], ["M", 2, "var(--warn)"], ["S", n - 8, "var(--ok)"]]
+    .map(([k, w, c]) => `<span class="${k === cat ? "on" : ""}" style="grid-column:span ${w};--bc:${c}">${CATS[k].k}</span>`).join("");
+  return `<div class="score" style="--n:${n};--cc:${col}" role="img" aria-label="${y} dari ${n} jawaban Ya, kategori ${CATS[cat].k}">
+    <div class="score-boxes" aria-hidden="true">${boxes}</div><div class="score-bands" aria-hidden="true">${bands}</div></div>`;
+}
 function header() {
   const r = data.role, kids = visibleKids(), c = child();
   const kidSel = r !== "dokter" && kids.length > 1
@@ -148,8 +171,8 @@ function header() {
   const add = r === "ortu" && kids.length && !ui.adding ? `<button class="btn sm" data-act="showadd">Tambah anak</button>` : "";
   return `<header class="top noprint">
     <div class="brand">
-      <svg viewBox="0 0 34 34" aria-hidden="true"><circle cx="17" cy="17" r="15" fill="none" stroke="var(--d0)" stroke-width="3"/><circle cx="17" cy="17" r="9.5" fill="none" stroke="var(--d1)" stroke-width="3" stroke-dasharray="40 100" stroke-linecap="round"/><circle cx="17" cy="17" r="4" fill="var(--d2)"/></svg>
-      <b>CogniTrack</b>
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="var(--pen)"/><path d="M7 24h18M10 24v-5M16 24V12M22 24V7" stroke="var(--on-pen)" stroke-width="3" stroke-linecap="round"/></svg>
+      CogniTrack
     </div>
     ${kidSel}${add}
     <div class="fs" role="group" aria-label="Ukuran teks"><button class="btn sm" data-act="fs" data-d="-1" aria-label="Perkecil teks">A−</button><button class="btn sm" data-act="fs" data-d="1" aria-label="Perbesar teks">A+</button></div>
@@ -165,7 +188,7 @@ function domTag(d) { return `<span class="tag" style="--c:${DOMS[d].c}"><i></i>$
 function blankDraft() { return { name: "", dob: "", prem: false, wali: "", rel: "Ibu", cData: false, cVideo: false, cGuru: false }; }
 function consentFields(d) {
   const rels = ["Ibu", "Ayah", "Wali"];
-  return `<h2 class="h3">Persetujuan orang tua atau wali</h2>
+  return `<div class="formsec"><h2 class="h3">Persetujuan orang tua atau wali</h2>
     <div class="note info small"><ul class="list">
       <li>Data yang dikumpulkan hanya nama panggilan, tanggal lahir, jawaban skrining, dan video bila Anda setujui.</li>
       <li>Dokter hanya melihat kode anak, bukan namanya. Aplikasi tidak memuat iklan.</li>
@@ -176,7 +199,7 @@ function consentFields(d) {
     <div class="field"><label for="rel">Hubungan dengan anak</label><select id="rel" class="f" data-in="rel">${rels.map(x => `<option ${x === d.rel ? "selected" : ""}>${x}</option>`).join("")}</select></div>
     <label class="chk"><input type="checkbox" data-in="cData" ${d.cData ? "checked" : ""}><span><b>Wajib.</b> Saya orang tua atau wali anak ini dan menyetujui data anak disimpan dan diolah untuk skrining perkembangan.</span></label>
     <label class="chk"><input type="checkbox" data-in="cVideo" ${d.cVideo ? "checked" : ""}><span><b>Opsional.</b> Saya menyetujui perekaman video anak dan peninjauan video oleh dokter pemverifikasi. Tanpa video, dokter menelaah dari jawaban Anda.</span></label>
-    <label class="chk"><input type="checkbox" data-in="cGuru" ${d.cGuru ? "checked" : ""}><span><b>Opsional.</b> Saya mengizinkan guru PAUD anak saya mengisi checklist KPSP untuk anak ini.</span></label>`;
+    <label class="chk"><input type="checkbox" data-in="cGuru" ${d.cGuru ? "checked" : ""}><span><b>Opsional.</b> Saya mengizinkan guru PAUD anak saya mengisi checklist KPSP untuk anak ini.</span></label></div>`;
 }
 function consentErr(d) {
   if (!d.wali.trim()) return "Isi nama orang tua atau wali.";
@@ -187,16 +210,16 @@ function consentOf(d) { return { wali: d.wali.trim(), rel: d.rel, at: todayISO()
 
 function viewAdd() {
   const first = data.children.length === 0, d = ui.draft;
-  return `<section class="card narrow">
+  return `<section class="narrow card">
     <h1 class="title">${first ? "Selamat datang di CogniTrack" : "Tambah anak"}</h1>
-    <p class="muted" style="margin-bottom:14px">Skrining perkembangan anak umur 3–72 bulan dengan KPSP sesuai pedoman SDIDTK, diverifikasi dokter, lalu stimulasi yang disesuaikan dengan hasilnya. Satu akun dapat menyimpan lebih dari satu anak.</p>
-    ${ui.err ? `<p class="err" role="alert">${esc(ui.err)}</p>` : ""}
-    <h2 class="h3">Data anak</h2>
+    <p class="lede">Skrining perkembangan anak umur 3–72 bulan dengan KPSP sesuai pedoman SDIDTK, diverifikasi dokter, lalu stimulasi yang disesuaikan dengan hasilnya. Satu akun dapat menyimpan lebih dari satu anak.</p>
+    ${ui.err ? `<p class="err" role="alert" style="margin-top:16px">${esc(ui.err)}</p>` : ""}
+    <div class="formsec"><h2 class="h3">Data anak</h2>
     <div class="field"><label for="nm">Nama panggilan</label><input id="nm" type="text" maxlength="40" value="${esc(d.name)}" data-in="name" autocomplete="off"><p class="small muted">Hanya tampil di perangkat Anda. Dokter melihat kode anak.</p></div>
     <div class="field"><label for="dob">Tanggal lahir</label><input id="dob" type="date" max="${todayISO()}" value="${esc(d.dob)}" data-in="dob"></div>
-    <label class="chk"><input type="checkbox" data-in="prem" ${d.prem ? "checked" : ""}><span>Anak lahir prematur (sebelum 37 minggu)</span></label>
+    <label class="chk"><input type="checkbox" data-in="prem" ${d.prem ? "checked" : ""}><span>Anak lahir prematur (sebelum 37 minggu)</span></label></div>
     ${consentFields(d)}
-    <div class="row">
+    <div class="row" style="margin-top:24px">
       <button class="btn pri" data-act="addchild">Simpan profil</button>
       ${first ? "" : `<button class="btn" data-act="canceladd">Batal</button>`}
     </div>
@@ -205,9 +228,9 @@ function viewAdd() {
 }
 function viewConsent(c) {
   const d = ui.draft;
-  return `<section class="card narrow">
+  return `<section class="narrow card">
     <h1 class="title">${c.consent ? "Ubah persetujuan" : "Lengkapi persetujuan"}</h1>
-    <p class="muted" style="margin-bottom:14px">${c.legacy && !c.consent ? `Profil ${esc(c.name)} berasal dari versi sebelumnya. CogniTrack kini memakai KPSP, jadi checklist lama tidak dipakai lagi. ` : ""}Persetujuan diperlukan sebelum skrining.</p>
+    <p class="lede">${c.legacy && !c.consent ? `Profil ${esc(c.name)} berasal dari versi sebelumnya. CogniTrack kini memakai KPSP, jadi checklist lama tidak dipakai lagi. ` : ""}Persetujuan diperlukan sebelum skrining.</p>
     ${ui.err ? `<p class="err" role="alert">${esc(ui.err)}</p>` : ""}
     ${consentFields(d)}
     <div class="row"><button class="btn pri" data-act="saveconsent">Simpan persetujuan</button>${c.consent ? `<button class="btn" data-act="cancelconsent">Batal</button>` : ""}</div>
@@ -221,8 +244,9 @@ function ageCard(c) {
   if (a.rounded < 3) form = "Belum ada. KPSP dimulai pada umur 3 bulan.";
   else if (a.rounded > 72) form = "Di luar cakupan. CogniTrack Tahap 1 untuk umur 3–72 bulan.";
   else form = `KPSP ${f} bulan${f !== a.rounded ? " (umur tidak tepat pada kelompok formulir, jadi dipakai formulir kelompok umur yang lebih muda)" : ""}`;
-  return `<div class="card"><h2 class="h2">Hitung umur otomatis</h2>
-    <dl class="kv">
+  return `<div class="card"><h2 class="h2">Umur dan formulir</h2>
+    ${a.rounded >= 3 ? ageTrack(a.rounded) : ""}
+    <dl class="kv" style="margin-top:20px">
       <dt>Umur hari ini</dt><dd>${ageText(a)}</dd>
       <dt>Umur dalam bulan</dt><dd><b>${a.rounded} bulan</b> ${a.d > 16 ? `(sisa ${a.d} hari dibulatkan ke atas)` : a.d ? `(sisa ${a.d} hari tidak dibulatkan)` : ""}</dd>
       <dt>Formulir</dt><dd>${form}</dd>
@@ -236,12 +260,13 @@ function premNote(c) {
 function resultBlock(s, withBtns) {
   const y = yesCount(s.verify.final), cat = CATS[category(y)], corr = corrections(s);
   return `<section class="card result ${cat.cls}">
-    <p class="small muted">KPSP ${s.form} bulan · diisi ${fmtDate(s.at)} · diverifikasi ${fmtTime(s.verify.at)}</p>
+    ${meta([`KPSP ${s.form} bulan`, `diisi ${fmtDate(s.at)}`, `diverifikasi ${fmtTime(s.verify.at)}`], "small")}
     <h2 class="cat">${cat.k}</h2>
-    <p>${y} dari ${s.verify.final.length} jawaban “Ya” setelah verifikasi dokter.${corr ? ` Dokter mengoreksi ${corr} jawaban.` : ""}${nobsOf(s).length ? ` ${nobsOf(s).length} butir tetap tidak teramati setelah rekam ulang sehingga dinilai “Tidak”.` : ""}</p>
-    <ul class="list" style="margin-top:10px">${advice(s).map(x => `<li>${esc(x)}</li>`).join("")}</ul>
-    ${s.verify.note ? `<p class="small" style="margin-top:10px"><b>Catatan dokter:</b> ${esc(s.verify.note)}</p>` : ""}
-    <p class="note info small" style="margin-top:12px">${NOT_DIAGNOSIS}</p>
+    ${scoreScale(s.verify.final)}
+    <p style="max-width:68ch">${y} dari ${s.verify.final.length} jawaban “Ya” setelah verifikasi dokter.${corr ? ` Dokter mengoreksi ${corr} jawaban.` : ""}${nobsOf(s).length ? ` ${nobsOf(s).length} butir tetap tidak teramati setelah rekam ulang sehingga dinilai “Tidak”.` : ""}</p>
+    <ul class="list">${advice(s).map(x => `<li>${esc(x)}</li>`).join("")}</ul>
+    ${s.verify.note ? `<p class="note" style="margin-top:16px"><b>Catatan dokter.</b> ${esc(s.verify.note)}</p>` : ""}
+    <p class="small muted" style="margin-top:16px;max-width:72ch">${NOT_DIAGNOSIS}</p>
     ${withBtns ? `<div class="row"><button class="btn pri sm" data-act="tab" data-t="stimulasi">Lihat stimulasi</button><button class="btn sm" data-act="report" data-s="${s.id}">Laporan ringkas</button></div>` : ""}
   </section>`;
 }
@@ -265,7 +290,7 @@ function rerecordBlock(s) {
 }
 function pendingBlock(s) {
   return `<section class="card result wait">
-    <p class="small muted">KPSP ${s.form} bulan · dikirim ${fmtTime(s.submittedAt)}</p>
+    ${meta([`KPSP ${s.form} bulan`, `dikirim ${fmtTime(s.submittedAt)}`], "small")}
     <h2 class="cat">Menunggu verifikasi</h2>
     <p>Dokter sedang meninjau ${hasVideo(s) ? "video dan " : ""}jawaban checklist. Kategori hasil akan tampil setelah dokter menetapkan jawaban akhir.</p>
     ${rerecordBlock(s)}
@@ -275,19 +300,20 @@ function pendingBlock(s) {
 function viewBeranda(c) {
   const a = ageParts(c.dob, todayISO()), dr = draftOf(c), pe = pendingOf(c), lv = lastVerified(c), isOrtu = data.role === "ortu";
   let status;
-  if (dr) status = `<div class="note info"><b>Skrining KPSP ${dr.form} bulan belum selesai</b> (${yesCount(dr.answers.map(x => x !== null))}/${dr.answers.length} butir dijawab). <button class="btn sm" style="margin-left:6px" data-act="tab" data-t="skrining">Lanjutkan</button></div>`;
-  else if (!pe && !lv) status = `<div class="note info"><b>Belum ada skrining.</b> <button class="btn sm pri" style="margin-left:6px" data-act="tab" data-t="skrining">Mulai skrining</button></div>`;
+  if (dr) status = `<div class="callout"><p><b>Skrining KPSP ${dr.form} bulan belum selesai.</b> ${yesCount(dr.answers.map(x => x !== null))} dari ${dr.answers.length} butir sudah dijawab.</p><button class="btn pri" data-act="tab" data-t="skrining">Lanjutkan skrining</button></div>`;
+  else if (!pe && !lv) status = `<div class="callout"><p><b>Belum ada skrining.</b> Siapkan sekitar 15 menit saat anak sehat dan tidak mengantuk.</p><button class="btn pri" data-act="tab" data-t="skrining">Mulai skrining</button></div>`;
   else status = "";
   const cs = c.consent;
   return `<div class="stack">
-    <div><h1 class="title">${esc(c.name)}</h1><p class="muted">Kode ${esc(c.code)} · ${ageText(a)} (${a.rounded} bulan) · lahir ${fmtDate(c.dob)}</p></div>
+    <div class="pagehead"><h1 class="title">${esc(c.name)}</h1>${meta([ageText(a), `lahir ${fmtDate(c.dob)}`, `kode <b>${esc(c.code)}</b>`])}
+      ${a.rounded >= 3 && a.rounded <= 72 ? ageTrack(a.rounded) : ""}</div>
     ${premNote(c)}
     ${status}
     ${pe ? pendingBlock(pe) : ""}
-    ${lv ? (pe ? `<h2 class="h2" style="margin:6px 0 -6px">Hasil terverifikasi sebelumnya</h2>` : "") + resultBlock(lv, true) : ""}
+    ${lv ? (pe ? `<h2 class="h2" style="margin:0 0 -12px">Hasil terverifikasi sebelumnya</h2>` : "") + resultBlock(lv, true) : ""}
     ${isOrtu ? `<section class="card"><h2 class="h2">Profil dan persetujuan</h2>
       <dl class="kv">
-        <dt>Orang tua/wali</dt><dd>${esc(cs.wali)} (${esc(cs.rel)}) · disetujui ${fmtDate(cs.at)}</dd>
+        <dt>Orang tua/wali</dt><dd>${esc(cs.wali)} (${esc(cs.rel)}), disetujui ${fmtDate(cs.at)}</dd>
         <dt>Perekaman video</dt><dd>${cs.video ? "Disetujui" : "Tidak disetujui"}</dd>
         <dt>Pengisian oleh guru</dt><dd>${cs.guru ? "Diizinkan" : "Tidak diizinkan"}</dd>
       </dl>
@@ -310,8 +336,8 @@ function itemGuide(it) {
     <dt>Cara merekam</dt><dd>${noRec ? "Tidak perlu direkam. Dokter menelaah berdasarkan jawaban Anda dan dapat mengonfirmasinya saat kunjungan." : esc(g.rekam)}</dd>
   </dl></details>`;
 }
-function itemHead(it, i) {
-  return `<div class="item-h"><span class="num">${i + 1}</span>${domTag(it[0])}${it[3].includes("k") ? `<span class="tag ghost">terkait kognitif</span>` : ""}${it[3].includes("n") ? `<span class="tag ghost">ditanyakan, tidak direkam</span>` : ""}</div>`;
+function itemHead(it, i, withNum) {
+  return `<div class="item-h">${withNum ? `<span class="num">Butir ${i + 1}</span>` : ""}${domTag(it[0])}${it[3].includes("k") ? `<span class="tag ghost">terkait kognitif</span>` : ""}${it[3].includes("n") ? `<span class="tag ghost">ditanyakan, tidak direkam</span>` : ""}</div>`;
 }
 /* Ringkasan butir untuk daftar (judul butir bila ada + kalimat pertanyaan). Teks lengkap tetap tampil di checklist. */
 function itemShort(it) {
@@ -361,7 +387,7 @@ function followForm(s, i) {
   }).join("");
   else if (sp.t === "text") body = `<textarea rows="2" maxlength="300" placeholder="${esc(sp.ph || "")}" aria-label="${esc(sp.q)}" data-ft="${i}">${esc(v || "")}</textarea>`;
   else body = `<div class="opts" role="radiogroup" aria-label="${esc(sp.q)}">${sp.opts.map((o, k) => `<button class="chipopt" role="radio" aria-checked="${v === k}" data-act="fchoice" data-i="${i}" data-o="${k}">${esc(o)}</button>`).join("")}</div>`;
-  return `<div class="follow"><p class="small"><b>Pertanyaan lanjutan.</b> ${esc(sp.q)}</p>${body}
+  return `<div class="follow"><p><b>Pertanyaan lanjutan.</b> ${esc(sp.q)}</p>${body}
     <p class="small muted">Dokter menilai isi jawaban ini, bukan hanya kata “Ya”.</p></div>`;
 }
 /* Tanda "tidak konsisten" hanya untuk dokter, agar orang tua dan guru tidak terdorong mengubah jawaban. */
@@ -390,7 +416,7 @@ function viewSkrining(c) {
   if (!dr) {
     const a = ageParts(c.dob, todayISO()), f = formFor(a.rounded);
     return `<div class="stack">
-      <div><h1 class="title">Skrining KPSP</h1><p class="muted">Kuesioner Pra Skrining Perkembangan untuk ${esc(c.name)}, empat bidang: gerak kasar, gerak halus, bicara dan bahasa, serta sosialisasi dan kemandirian.</p></div>
+      <div class="pagehead"><h1 class="title">Skrining KPSP</h1><p class="lede">Kuesioner Pra Skrining Perkembangan untuk ${esc(c.name)}, empat bidang: gerak kasar, gerak halus, bicara dan bahasa, serta sosialisasi dan kemandirian.</p></div>
       ${premNote(c)}
       ${ageCard(c)}
       ${f ? `<div class="row"><button class="btn pri" data-act="start">Mulai skrining KPSP ${f} bulan</button></div>
@@ -400,7 +426,7 @@ function viewSkrining(c) {
   const items = KPSP[dr.form];
   if (dr.step === "video") return viewVideo(c, dr, items);
   const answered = dr.answers.filter(x => x !== null).length, ok = canNext(dr);
-  const list = items.map((it, i) => `<article class="card item">
+  const list = items.map((it, i) => `<article class="item"><span class="num" aria-hidden="true">${i + 1}</span><div class="item-b">
       ${itemHead(it, i)}
       <p class="q">${esc(it[1])}</p>
       ${itemFig(it)}
@@ -409,20 +435,21 @@ function viewSkrining(c) {
         <button data-act="ans" data-i="${i}" data-v="y" aria-pressed="${dr.answers[i] === true}">Ya</button><button data-act="ans" data-i="${i}" data-v="n" aria-pressed="${dr.answers[i] === false}">Tidak</button>
       </div>
       ${followForm(dr, i)}
-    </article>`).join("");
+    </div></article>`).join("");
   return `<div class="stack">
-    <div><h1 class="title">KPSP ${dr.form} bulan</h1>
-    <p class="muted">${esc(c.name)} · umur ${ageText(dr.age)} (${dr.age.rounded} bulan) · diisi oleh ${ROLES[dr.by]} · ${answered}/${items.length} dijawab</p></div>
+    <div class="pagehead"><h1 class="title">KPSP ${dr.form} bulan</h1>
+    ${meta([`<b>${esc(c.name)}</b>`, `umur ${ageText(dr.age)}`, `diisi oleh ${ROLES[dr.by]}`])}</div>
     ${draftBanner()}
-    <div class="note info small">${RULE_ANSWER} Buka “Petunjuk pengamatan” pada setiap butir untuk alat, cara mengamati, dan cara merekam.${KPSP_DRAFT ? "" : `<br><span class="muted">Teks butir dan gambar sesuai ${esc(KPSP_SOURCE)}.</span>`}</div>
-    ${list}
-    <div class="row">
+    <div class="note info">${RULE_ANSWER} Buka “Petunjuk pengamatan” pada setiap butir untuk alat, cara mengamati, dan cara merekam.${KPSP_DRAFT ? "" : `<br><span class="muted">Teks butir dan gambar sesuai ${esc(KPSP_SOURCE)}.</span>`}</div>
+    <div><div class="progress" aria-live="polite"><span>${answered} dari ${items.length} dijawab</span><span class="bar"><i style="--p:${answered / items.length * 100}%"></i></span></div>
+    <div class="sheet">${list}</div></div>
+    <div class="row" style="margin-top:0">
       <button class="btn pri" data-act="tovideo" ${ok ? "" : "disabled"}>${c.consent.video ? "Lanjut ke unggah video" : "Lanjut ke pengiriman"}</button>
       ${ui.confirm === "canceldraft"
         ? `<span class="small">Buang jawaban skrining ini?</span><button class="btn sm danger" data-act="canceldraftyes">Ya, batalkan</button><button class="btn sm" data-act="nope">Tidak</button>`
         : `<button class="btn" data-act="canceldraft">Batalkan skrining</button>`}
     </div>
-    <p class="small muted" id="nexthint">${nextHint(dr)}</p>
+    <p class="small muted" id="nexthint" style="margin-top:-12px">${nextHint(dr)}</p>
   </div>`;
 }
 function viewVideo(c, dr, items) {
@@ -433,7 +460,7 @@ function viewVideo(c, dr, items) {
     <p class="muted">Rekam ${esc(c.name)} saat melakukan tugas pada butir yang dapat diperagakan. Video hanya dapat dibuka oleh dokter pemverifikasi.</p>
     <div class="card"><h2 class="h2">Butir yang sebaiknya direkam</h2><ol class="list plain">${rec.map(li).join("")}</ol>
       ${habit.length ? `<h3 class="h3">Tidak perlu direkam</h3><p class="small muted" style="margin-bottom:6px">Butir ini ditanyakan kepada orang tua atau pengasuh, jadi ditelaah dokter dari jawaban Anda dan dapat dikonfirmasi saat kunjungan.</p><ol class="list plain">${habit.map(li).join("")}</ol>` : ""}</div>
-    <div class="note info small"><ul class="list">
+    <div class="note info"><ul class="list">
       <li>Video pendek 10–60 detik per tugas. Satu video boleh berisi beberapa tugas.</li>
       <li>Sebutkan nomor butir di awal rekaman, misalnya “butir 3”.</li>
       <li>Pastikan cahaya cukup, anak terlihat jelas, dan hindari merekam orang lain yang tidak perlu.</li>
@@ -446,10 +473,10 @@ function viewVideo(c, dr, items) {
     </div>`
     : `<div class="note info">Anda tidak menyetujui perekaman video. Dokter akan menelaah berdasarkan jawaban checklist, dan dapat mengonfirmasi saat kunjungan. Persetujuan dapat diubah di Beranda.</div>`;
   return `<div class="stack">
-    <div><h1 class="title">${c.consent.video ? "Unggah video" : "Kirim untuk verifikasi"}</h1><p class="muted small">KPSP ${dr.form} bulan · checklist selesai diisi</p></div>
+    <div class="pagehead"><h1 class="title">${c.consent.video ? "Unggah video" : "Kirim untuk verifikasi"}</h1>${meta([`KPSP ${dr.form} bulan`, "checklist selesai diisi"])}</div>
     ${body}
     <div class="row">
-      <button class="btn" data-act="toisi">Kembali ke checklist</button>
+      <button class="btn back" data-act="toisi">Kembali ke checklist</button>
       <button class="btn pri" data-act="submit">Kirim ke dokter untuk verifikasi</button>
     </div>
   </div>`;
@@ -492,22 +519,22 @@ function viewStimulasi(c) {
     intro = `Stimulasi umum untuk umur ${p.g.label}, dalam urutan baku bidang perkembangan.`;
     notes = p.mode === "pending"
       ? `<div class="note info small">Skrining masih menunggu verifikasi dokter. Sementara itu, lakukan stimulasi umum ini. Urutan khusus untuk ${esc(c.name)} muncul setelah hasil diverifikasi.</div>`
-      : `<div class="note info small">Setelah skrining diverifikasi dokter, stimulasi akan diurutkan sesuai kebutuhan ${esc(c.name)}. <button class="btn sm" style="margin-left:6px" data-act="tab" data-t="skrining">Mulai skrining</button></div>`;
+      : `<div class="callout"><p>Setelah skrining diverifikasi dokter, stimulasi akan diurutkan sesuai kebutuhan ${esc(c.name)}.</p><button class="btn sm" data-act="tab" data-t="skrining">Mulai skrining</button></div>`;
   }
   const safety = p.g.min < 36 ? `<div class="note warn small">Dampingi anak selama bermain. Jauhkan benda kecil seperti kancing, baterai, atau manik-manik yang bisa tertelan.</div>` : "";
-  const secs = p.secs.map(sec => `<section class="dom">
-      <div class="dom-h"><span class="dot" style="background:${DOMS[sec.d].c}"></span><h2 class="h2" style="margin:0">${DOMS[sec.d].k}</h2>${sec.n !== null ? `<span class="stt">${sec.n} butir “Tidak”</span>` : ""}</div>
-      <div class="tips">${sec.acts.map(x => `<article class="tip" style="border-left-color:${DOMS[sec.d].c}">
+  const secs = p.secs.map(sec => `<section class="dom" style="--c:${DOMS[sec.d].c}">
+      <div class="dom-h"><h2 class="h2">${DOMS[sec.d].k}</h2>${sec.n !== null ? `<span class="stt">${sec.n ? sec.n + " butir dijawab “Tidak”" : "semua butir “Ya”"}</span>` : ""}</div>
+      <div class="tips">${sec.acts.map(x => `<article class="tip">
         <h3>${esc(x.a[0])}</h3><p>${esc(x.a[1])}</p>
         ${x.items.length ? `<p class="small for"><b>Terkait butir “Tidak”:</b> ${x.items.map(i => `no. ${i + 1}, ${esc(p.items[i][1])}`).join("; ")}</p>` : ""}
       </article>`).join("")}</div>
     </section>`).join("");
   return `<div class="stack">
-    <div><h1 class="title">Stimulasi</h1><p class="muted">${intro}</p></div>
+    <div class="pagehead"><h1 class="title">Stimulasi</h1><p class="lede">${intro}</p></div>
     ${notes}${safety}
-    <div class="card"><h2 class="h2">Prinsip dasar</h2><ul class="list small">${STIM_RULES.map(r => `<li>${esc(r)}</li>`).join("")}</ul></div>
+    <div><h2 class="h2">Prinsip dasar</h2><ul class="list small principles">${STIM_RULES.map(r => `<li>${esc(r)}</li>`).join("")}</ul></div>
     ${secs}
-    <p class="foot">Sumber: ${esc(STIM_META.sumber)} · Peninjau: ${esc(STIM_META.peninjau)} · Tanggal tinjau: ${esc(STIM_META.tanggal)}. Bila anak kehilangan kemampuan yang sebelumnya sudah ada, segera konsultasikan dengan dokter.</p>
+    <p class="foot">Sumber: ${esc(STIM_META.sumber)}. Peninjau: ${esc(STIM_META.peninjau)}. Tanggal tinjau: ${esc(STIM_META.tanggal)}. Bila anak kehilangan kemampuan yang sebelumnya sudah ada, segera konsultasikan dengan dokter.</p>
   </div>`;
 }
 
@@ -524,9 +551,9 @@ function viewRiwayat(c) {
       <td class="st"><span class="pill ${s.status === "terverifikasi" ? CATS[category(yesCount(s.verify.final))].cls : ""}">${statusLabel(s)}</span></td>
       <td>${s.status === "draft" ? `<button class="btn sm" data-act="tab" data-t="skrining">Lanjutkan</button>` : `<button class="btn sm" data-act="report" data-s="${s.id}">Laporan</button>`}</td></tr>`).join("");
   return `<div class="stack">
-    <div><h1 class="title">Riwayat skrining</h1><p class="muted">Semua skrining ${esc(c.name)}. Laporan ringkas dapat dicetak atau dibawa saat konsultasi.</p></div>
+    <div class="pagehead"><h1 class="title">Riwayat skrining</h1><p class="lede">Semua skrining ${esc(c.name)}. Laporan ringkas dapat dicetak atau dibawa saat konsultasi.</p></div>
     ${rows ? `<div class="card scroll"><table class="rt"><thead><tr><th>Tanggal</th><th>Formulir</th><th>Diisi oleh</th><th>Hasil</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
-      : `<div class="card empty"><p class="muted">Belum ada skrining.</p><button class="btn pri" style="margin-top:10px" data-act="tab" data-t="skrining">Mulai skrining</button></div>`}
+      : `<div class="card empty"><p class="muted">Belum ada skrining untuk ${esc(c.name)}.</p><button class="btn pri" data-act="tab" data-t="skrining">Mulai skrining</button></div>`}
     ${data.role === "ortu" ? `<div class="row"><button class="btn sm" data-act="export">Unduh data anak (JSON)</button></div><p class="small muted">Data ekspor memakai kode anak tanpa nama, dengan struktur yang disiapkan untuk dipetakan ke format SATUSEHAT.</p>` : ""}
   </div>`;
 }
@@ -552,21 +579,21 @@ function viewReport(c, s) {
     return `<tr class="${corr ? "corr" : ""}"><td>${i + 1}</td><td class="pre">${esc(it[1])}<div class="small muted">${DOMS[it[0]].k}</div>${followView(s, i)}</td><td>${s.answers[i] ? "Ya" : "Tidak"}</td><td>${v ? (v.final[i] ? "Ya" : "Tidak") + (nobsOf(s).includes(i) ? " (tidak teramati)" : "") + (corr ? " *" : "") : "–"}</td></tr>`;
   }).join("");
   return `<div class="stack">
-    <div class="noprint row" style="margin-top:0"><button class="btn sm" data-act="closereport">← Kembali ke riwayat</button></div>
+    <div class="noprint row" style="margin-top:0"><button class="btn sm back" data-act="closereport">Kembali ke riwayat</button></div>
     <div class="card">
-      <h1 style="font-size:1.4rem;margin-bottom:10px">Laporan ringkas skrining perkembangan</h1>
+      <h1 class="h2" style="font-size:1.5rem;margin-bottom:16px">Laporan ringkas skrining perkembangan</h1>
       <dl class="kv">
-        <dt>Anak</dt><dd>${esc(c.name)} · kode ${esc(c.code)}</dd>
-        <dt>Tanggal lahir</dt><dd>${fmtDate(c.dob)}${c.prem ? " · lahir prematur (umur tidak dikoreksi)" : ""}</dd>
-        <dt>Tanggal skrining</dt><dd>${fmtDate(s.at)} · diisi oleh ${ROLES[s.by]}</dd>
+        <dt>Anak</dt><dd>${esc(c.name)}, kode ${esc(c.code)}</dd>
+        <dt>Tanggal lahir</dt><dd>${fmtDate(c.dob)}${c.prem ? ", lahir prematur (umur tidak dikoreksi)" : ""}</dd>
+        <dt>Tanggal skrining</dt><dd>${fmtDate(s.at)}, diisi oleh ${ROLES[s.by]}</dd>
         <dt>Umur</dt><dd>${ageText(s.age)} (${s.age.rounded} bulan)</dd>
         <dt>Formulir</dt><dd>KPSP ${s.form} bulan</dd>
         <dt>Status</dt><dd>${v ? `Diverifikasi oleh ${esc(v.doctor)}, ${fmtTime(v.at)}` : s.status === "menunggu" ? "Menunggu verifikasi dokter" : "Draf"}</dd>
       </dl>
-      ${v ? resultBlock(s, false) : `<div class="note info" style="margin-top:14px">Kategori hasil belum ditampilkan karena jawaban belum diverifikasi dokter.</div>`}
-      <h2 class="h2" style="margin-top:18px">Ringkasan per bidang ${v ? "(jawaban akhir)" : "(jawaban pengguna)"}</h2>
+      ${v ? `<div style="margin-top:20px">${resultBlock(s, false)}</div>` : `<div class="note info" style="margin-top:16px">Kategori hasil belum ditampilkan karena jawaban belum diverifikasi dokter.</div>`}
+      <h2 class="h2" style="margin-top:32px">Ringkasan per bidang ${v ? "(jawaban akhir)" : "(jawaban pengguna)"}</h2>
       <table class="rt"><thead><tr><th>Bidang</th><th>Ya</th><th>Tidak</th></tr></thead><tbody>${perDom}</tbody></table>
-      <h2 class="h2" style="margin-top:18px">Jawaban per butir</h2>
+      <h2 class="h2" style="margin-top:32px">Jawaban per butir</h2>
       <div class="scroll"><table class="rt"><thead><tr><th>No</th><th>Butir</th><th>Pengguna</th><th>Akhir</th></tr></thead><tbody>${rows}</tbody></table></div>
       ${v && corrections(s) ? `<p class="small muted">* dikoreksi dokter</p>` : ""}
       <p class="foot">${KPSP_DRAFT ? "Teks butir pada prototype ini masih draf dan belum identik dengan Buku Bagan SDIDTK." : "Teks butir, urutan, dan domain sesuai " + esc(KPSP_SOURCE) + "."}</p>
@@ -605,7 +632,7 @@ const clipSec = (s, i) => 12 + ((i * 17 + s.form) % 38);
 const mmss = t => Math.floor(t / 60) + ":" + pad(t % 60);
 const PROTO_VIDEO = `<div class="note warn small"><b>Ini hanyalah prototipe.</b> Video belum benar-benar direkam atau diunggah. Halaman ini menampilkan contoh tampilan pemutar video untuk dokter.</div>`;
 function sessionMeta(c, s) {
-  return `Kode <b>${esc(c.code)}</b> · KPSP ${s.form} bulan · umur ${s.age.rounded} bulan · diisi ${ROLES[s.by]}${c.prem ? " · prematur" : ""}`;
+  return [`Kode <b>${esc(c.code)}</b>`, `KPSP ${s.form} bulan`, `umur ${s.age.rounded} bulan`, `diisi ${ROLES[s.by]}`, c.prem ? "prematur" : ""];
 }
 function thumb(s, i, small) {
   const it = KPSP[s.form][i];
@@ -616,36 +643,36 @@ function viewAntrean() {
   const now = Date.now();
   const q = allSessions().filter(x => x.s.status === "menunggu").sort((a, b) => a.s.submittedAt - b.s.submittedAt);
   const week = allSessions().filter(x => x.s.status === "terverifikasi" && now - x.s.verify.at < 7 * 864e5).length;
-  const tile = (n, l) => `<div class="stat"><b>${n}</b><span>${l}</span></div>`;
+  const tile = (n, l) => `<div><dt>${l}</dt><dd>${n}</dd></div>`;
   return `<div class="stack">
-    <div><h1 class="title">Dasbor dokter</h1><p class="muted">Tinjau video, konfirmasi atau koreksi jawaban per butir, lalu tetapkan hasil akhir. Nama anak tidak ditampilkan.</p></div>
-    <div class="stats">
+    <div class="pagehead"><h1 class="title">Dasbor dokter</h1><p class="lede">Tinjau video, konfirmasi atau koreksi jawaban per butir, lalu tetapkan hasil akhir. Nama anak tidak ditampilkan.</p></div>
+    <dl class="ledger">
       ${tile(q.length, "menunggu verifikasi")}
       ${tile(q.filter(x => hasVideo(x.s)).length, "disertai video")}
       ${tile(q.length ? fmtDur(now - q[0].s.submittedAt) : "–", "antrean terlama")}
       ${tile(week, "diverifikasi 7 hari terakhir")}
-    </div>
-    <h2 class="h2" style="margin:6px 0 -4px">Antrean verifikasi</h2>
-    ${q.length ? q.map(({ c, s }) => {
+    </dl>
+    <div><h2 class="h2">Antrean verifikasi</h2>
+    ${q.length ? `<div class="queue">` + q.map(({ c, s }) => {
       const cl = clipsOf(s), wait = rrWaiting(s), rr = s.rerecord;
-      const rrTag = !rr ? "" : wait ? `<span class="pill warn">Rekam ulang diminta · batas ${fmtTime(rr.due)}</span>`
+      const rrTag = !rr ? "" : wait ? `<span class="pill warn">Rekam ulang diminta, batas ${fmtTime(rr.due)}</span>`
         : rr.resubmittedAt ? `<span class="pill ok">Video rekam ulang diterima</span>` : `<span class="pill bad">Batas rekam ulang lewat</span>`;
-      return `<article class="card qrow">
+      return `<article class="qrow">
         ${cl.length ? thumb(s, cl[0]) : `<span class="thumb none" aria-hidden="true">Tanpa video</span>`}
-        <div class="qmain"><p>${sessionMeta(c, s)}</p>
-          <p class="small muted">Dikirim ${fmtTime(s.submittedAt)} · menunggu ${fmtDur(now - s.submittedAt)} · ${cl.length ? cl.length + " klip video" : "tanpa video"}</p>${rrTag}</div>
+        <div class="qmain">${meta(sessionMeta(c, s))}
+          ${meta([`Dikirim ${fmtTime(s.submittedAt)}`, `menunggu ${fmtDur(now - s.submittedAt)}`, cl.length ? cl.length + " klip video" : "tanpa video"], "small")}${rrTag}</div>
         <div class="row" style="margin-top:0">
           ${cl.length ? `<button class="btn sm" data-act="vopen" data-s="${s.id}" data-back="antrean">Lihat video</button>` : ""}
           ${wait ? `<button class="btn sm" disabled title="Dapat ditinjau setelah video ulang diterima atau batas waktu lewat">Menunggu rekaman ulang</button>` : `<button class="btn pri sm" data-act="review" data-s="${s.id}">Tinjau</button>`}
         </div>
       </article>`;
-    }).join("") : `<div class="card empty"><p class="muted">Tidak ada checklist yang menunggu verifikasi.</p></div>`}
+    }).join("") + `</div>` : `<div class="card empty"><p class="muted">Tidak ada checklist yang menunggu verifikasi.</p></div>`}</div>
   </div>`;
 }
 function vdPreview(items) {
   if (ui.vd.rr.length) return `Kategori belum dapat ditetapkan: <b>${ui.vd.rr.length} butir menunggu rekam ulang</b>.`;
   const y = yesCount(ui.vd.final), cat = CATS[category(y)];
-  return `Jawaban akhir: <b>${y}/${items.length} Ya</b> → <b>${cat.k}</b> · ${ui.vd.final.filter((v, i) => v !== ui.vd.user[i]).length} butir dikoreksi`;
+  return `Jawaban akhir <b>${y} dari ${items.length} Ya</b>, kategori <b>${cat.k}</b>. ${ui.vd.final.filter((v, i) => v !== ui.vd.user[i]).length} butir dikoreksi.`;
 }
 function finalSeg(i, final, off) {
   const d = off ? " disabled" : "";
@@ -661,7 +688,7 @@ function viewVerify(c, s) {
     return `${rr.items.includes(i) ? `<span class="pill">${rr.resubmittedAt ? "sudah direkam ulang" : "rekam ulang tidak dikirim"}</span>` : ""}
       <label class="chk small rrchk"><input type="checkbox" data-act="vnobs" data-i="${i}" ${vd.nobs.includes(i) ? "checked" : ""}> Tetap tidak teramati: tetapkan “Tidak”</label>`;
   };
-  const rows = items.map((it, i) => `<article class="item vrow2 ${vd.final[i] !== s.answers[i] ? "corr" : ""}" data-vrow="${i}">
+  const rows = items.map((it, i) => `<article class="item vrow2 ${vd.final[i] !== s.answers[i] ? "corr" : ""}" data-vrow="${i}"><span class="num" aria-hidden="true">${i + 1}</span><div class="item-b">
       ${itemHead(it, i)}
       <p class="q">${esc(it[1])}</p>
       ${itemFig(it)}
@@ -674,10 +701,10 @@ function viewVerify(c, s) {
       </div>
       ${followView(s, i)}
       ${clipCtl(i)}
-    </article>`).join("");
+    </div></article>`).join("");
   return `<div class="stack">
-    <div class="row" style="margin-top:0"><button class="btn sm" data-act="closereview">← Kembali ke dasbor</button></div>
-    <div><h1 class="title">Verifikasi checklist</h1><p class="muted">${sessionMeta(c, s)} · umur ${ageText(s.age)} · dikirim ${fmtTime(s.submittedAt)}</p></div>
+    <div class="row" style="margin-top:0"><button class="btn sm back" data-act="closereview">Kembali ke dasbor</button></div>
+    <div class="pagehead"><h1 class="title">Verifikasi checklist</h1>${meta([...sessionMeta(c, s), `dikirim ${fmtTime(s.submittedAt)}`])}</div>
     ${draftBanner()}
     <section class="card"><h2 class="h2">Video dari pengguna</h2>
       ${rr ? `<p class="note info small" style="margin-bottom:12px">Rekam ulang sudah diminta sekali (${fmtTime(rr.at)}) untuk butir ${rr.items.map(i => i + 1).join(", ")}. ${rr.resubmittedAt ? `Video ulang diterima ${fmtTime(rr.resubmittedAt)}.` : "Video ulang tidak dikirim sampai batas waktu."} Butir yang tetap tidak teramati ditetapkan “Tidak” dengan catatan “tidak teramati”.</p>` : ""}
@@ -690,8 +717,8 @@ function viewVerify(c, s) {
         : `<p class="muted small">${c.consent.video ? "Pengguna mengirim tanpa video." : "Orang tua tidak menyetujui perekaman video."} Telaah berdasarkan jawaban pengguna.</p>`}
     </section>
     <section class="card"><h2 class="h2">Jawaban per butir</h2>
-      <p class="small muted" style="margin-bottom:6px">Jawaban akhir hanya “Ya” atau “Tidak”, sesuai KPSP. Jawaban terisi sama dengan jawaban pengguna; ubah bila video atau telaah menunjukkan jawaban berbeda. Untuk butir yang ditanyakan kepada orang tua, nilailah isi pertanyaan lanjutannya, bukan hanya kata “Ya”.${rr ? "" : " Bila butir tidak teramati di video, minta rekam ulang alih-alih langsung menetapkan “Tidak”."}</p>
-      ${rows}
+      <p class="small muted" style="margin-bottom:8px;max-width:72ch">Jawaban akhir hanya “Ya” atau “Tidak”, sesuai KPSP. Jawaban terisi sama dengan jawaban pengguna; ubah bila video atau telaah menunjukkan jawaban berbeda. Untuk butir yang ditanyakan kepada orang tua, nilailah isi pertanyaan lanjutannya, bukan hanya kata “Ya”.${rr ? "" : " Bila butir tidak teramati di video, minta rekam ulang alih-alih langsung menetapkan “Tidak”."}</p>
+      <div class="vrows">${rows}</div>
     </section>
     <section class="card">
       <p class="note info" id="vprev">${vdPreview(items)}</p>
@@ -718,20 +745,20 @@ function viewVideos() {
   const { c, s } = x, items = KPSP[s.form], cl = clipsOf(s);
   const editable = vv.back === "verify" && ui.vd && ui.vd.sid === s.id && s.status === "menunggu";
   const finalOf = i => editable ? ui.vd.final[i] : s.verify ? s.verify.final[i] : null;
-  const back = vv.back === "verify" ? "← Kembali ke verifikasi" : vv.back === "selesai" ? "← Kembali ke daftar terverifikasi" : "← Kembali ke dasbor";
-  if (!cl.length) return `<div class="stack"><div class="row" style="margin-top:0"><button class="btn sm" data-act="vclose">${back}</button></div><div class="card empty"><p class="muted">Sesi ini tidak disertai video.</p></div></div>`;
+  const back = vv.back === "verify" ? "Kembali ke verifikasi" : vv.back === "selesai" ? "Kembali ke daftar terverifikasi" : "Kembali ke dasbor";
+  if (!cl.length) return `<div class="stack"><div class="row" style="margin-top:0"><button class="btn sm back" data-act="vclose">${back}</button></div><div class="card empty"><p class="muted">Sesi ini tidak disertai video.</p></div></div>`;
   if (!cl.includes(vv.clip)) vv.clip = cl[0];
   const i = vv.clip, it = items[i], pos = cl.indexOf(i), dur = clipSec(s, i), fin = finalOf(i);
   const ans = (v, lbl) => `<span class="achip ${v === true ? "y" : v === false ? "n" : ""}">${lbl}: ${v === true ? "Ya" : v === false ? "Tidak" : "–"}</span>`;
   const habit = items.map((t, k) => k).filter(k => items[k][3].includes("n"));
   return `<div class="stack">
-    <div class="row" style="margin-top:0"><button class="btn sm" data-act="vclose">${back}</button></div>
-    <div><h1 class="title">Video dari pengguna</h1><p class="muted">${sessionMeta(c, s)} · dikirim ${fmtTime(s.submittedAt)} · ${cl.length} klip</p></div>
+    <div class="row" style="margin-top:0"><button class="btn sm back" data-act="vclose">${back}</button></div>
+    <div class="pagehead"><h1 class="title">Video dari pengguna</h1>${meta([...sessionMeta(c, s), `dikirim ${fmtTime(s.submittedAt)}`, `${cl.length} klip`])}</div>
     ${PROTO_VIDEO}
     <div class="vpage">
       <div class="stack" style="gap:12px">
         <div class="player" style="--c:${DOMS[it[0]].c}" role="img" aria-label="Contoh tampilan video butir ${i + 1}">
-          <div class="p-top"><span>Butir ${i + 1} · ${DOMS[it[0]].k}</span><span class="p-badge">Contoh tampilan</span></div>
+          <div class="p-top"><span>Butir ${i + 1}, ${DOMS[it[0]].k.toLowerCase()}</span><span class="p-badge">Contoh tampilan</span></div>
           <svg class="p-kid" viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="34" r="16" fill="currentColor"/><path d="M34 104c0-24 11-44 26-44s26 20 26 44z" fill="currentColor"/></svg>
           <button class="p-play" data-act="vplay" aria-label="${vv.playing ? "Jeda" : "Putar"} (contoh)">${vv.playing
             ? `<svg viewBox="0 0 24 24"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor"/></svg>`
@@ -740,16 +767,16 @@ function viewVideos() {
         </div>
         <p class="small muted">Video belum tersedia di prototipe. Pada aplikasi, rekaman orang tua atau guru diputar di sini dan hanya dapat diakses dokter pemverifikasi.</p>
         <section class="card">
-          ${itemHead(it, i)}
+          ${itemHead(it, i, true)}
           <p class="q">${esc(it[1])}</p>
           ${itemFig(it)}
           <div class="vans">${ans(s.answers[i], "Pengguna")}${editable
             ? `<span class="small">Jawaban akhir:</span>${ui.vd.rr.includes(i) ? `<span class="pill warn">menunggu rekam ulang</span>` : finalSeg(i, fin, ui.vd.nobs.includes(i))}${fin !== s.answers[i] && !ui.vd.rr.includes(i) ? `<span class="corr-lbl" style="display:inline-block">dikoreksi</span>` : ""}`
             : ans(fin, "Akhir")}</div>
           <div class="row">
-            <button class="btn sm" data-act="vclip" data-i="${cl[pos - 1]}" ${pos > 0 ? "" : "disabled"}>← Klip sebelumnya</button>
+            <button class="btn sm" data-act="vclip" data-i="${cl[pos - 1]}" ${pos > 0 ? "" : "disabled"}>Klip sebelumnya</button>
             <span class="small muted">${pos + 1} dari ${cl.length}</span>
-            <button class="btn sm" data-act="vclip" data-i="${cl[pos + 1]}" ${pos < cl.length - 1 ? "" : "disabled"}>Klip berikutnya →</button>
+            <button class="btn sm" data-act="vclip" data-i="${cl[pos + 1]}" ${pos < cl.length - 1 ? "" : "disabled"}>Klip berikutnya</button>
           </div>
         </section>
       </div>
@@ -757,8 +784,8 @@ function viewVideos() {
         <h2 class="h2">Klip per butir</h2>
         ${cl.map(k => `<button class="clip" data-act="vclip" data-i="${k}" aria-current="${k === i}">
             ${thumb(s, k, true)}
-            <span class="clip-t"><span><b>Butir ${k + 1}</b> · ${DOMS[items[k][0]].k}</span><span class="small muted">${esc(itemShort(items[k]))}</span>
-            <span class="small">${s.answers[k] ? "Ya" : "Tidak"}${finalOf(k) !== null && finalOf(k) !== s.answers[k] ? ` → ${finalOf(k) ? "Ya" : "Tidak"} (dikoreksi)` : ""}${s.rerecord && s.rerecord.items.includes(k) ? ` · ${s.rerecord.resubmittedAt ? "rekaman ulang" : "rekam ulang diminta"}` : ""}${nobsOf(s).includes(k) ? " · tidak teramati" : ""}</span></span>
+            <span class="clip-t"><span><b>Butir ${k + 1}</b>, ${DOMS[items[k][0]].k.toLowerCase()}</span><span class="small muted">${esc(itemShort(items[k]))}</span>
+            <span class="small">${s.answers[k] ? "Ya" : "Tidak"}${finalOf(k) !== null && finalOf(k) !== s.answers[k] ? `, dikoreksi menjadi ${finalOf(k) ? "Ya" : "Tidak"}` : ""}${s.rerecord && s.rerecord.items.includes(k) ? `, ${s.rerecord.resubmittedAt ? "rekaman ulang" : "rekam ulang diminta"}` : ""}${nobsOf(s).includes(k) ? ", tidak teramati" : ""}</span></span>
           </button>`).join("")}
         ${habit.length ? `<p class="small muted" style="margin-top:10px">Tidak direkam (ditanyakan kepada orang tua): butir ${habit.map(k => k + 1).join(", ")}.</p>` : ""}
       </aside>
@@ -768,9 +795,9 @@ function viewVideos() {
 function viewSelesai() {
   const list = allSessions().filter(x => x.s.status === "terverifikasi").sort((a, b) => b.s.verify.at - a.s.verify.at);
   return `<div class="stack">
-    <div><h1 class="title">Sudah diverifikasi</h1><p class="muted">Pada penelitian, semua video dihapus setelah periode penelitian berakhir.</p></div>
+    <div class="pagehead"><h1 class="title">Sudah diverifikasi</h1><p class="lede">Pada penelitian, semua video dihapus setelah periode penelitian berakhir.</p></div>
     ${list.length ? `<div class="card scroll"><table class="rt"><thead><tr><th>Anak</th><th>Formulir</th><th>Diverifikasi</th><th>Hasil</th><th>Video</th></tr></thead><tbody>${list.map(({ c, s }) => `<tr>
-        <td>${esc(c.code)}</td><td>KPSP ${s.form} bl</td><td>${fmtTime(s.verify.at)}<div class="small muted">${esc(s.verify.doctor)} · ${corrections(s)} dikoreksi</div></td>
+        <td>${esc(c.code)}</td><td>KPSP ${s.form} bl</td><td>${fmtTime(s.verify.at)}<div class="small muted">${esc(s.verify.doctor)}, ${corrections(s)} dikoreksi</div></td>
         <td><span class="pill ${CATS[category(yesCount(s.verify.final))].cls}">${statusLabel(s)}</span></td>
         <td>${hasVideo(s) ? `<button class="btn sm" data-act="vopen" data-s="${s.id}" data-back="selesai">Lihat video</button>` : `<span class="small muted">Tidak ada</span>`}</td></tr>`).join("")}</tbody></table></div>`
       : `<div class="card empty"><p class="muted">Belum ada checklist yang diverifikasi.</p></div>`}
@@ -811,10 +838,10 @@ function viewIndikator() {
   const nNobs = ver.reduce((a, s) => a + nobsOf(s).length, 0);
   let nFollow = 0, nConflict = 0;
   done.forEach(s => KPSP[s.form].forEach((it, i) => { const sp = followSpec(it); if (sp && s.answers[i] === true) { nFollow++; if (followConflict(sp, followOf(s, i))) nConflict++; } }));
-  const krow = (lbl, k) => `<tr><td>${lbl}</td><td>${k ? `κ = ${k.k === null ? "–" : dec(k.k)} · kesepakatan ${pct(k.po * k.n, k.n)} · n = ${k.n}<div class="small muted">${landisKoch(k.k)}</div>` : "–"}</td></tr>`;
+  const krow = (lbl, k) => `<tr><td>${lbl}</td><td>${k ? `κ = ${k.k === null ? "–" : dec(k.k)}, kesepakatan ${pct(k.po * k.n, k.n)}, n = ${k.n}<div class="small muted">${landisKoch(k.k)}</div>` : "–"}</td></tr>`;
   return `<div class="stack">
-    <div><h1 class="title">Indikator feasibility</h1><p class="muted">Dihitung dari data di perangkat ini untuk uji feasibility alur verifikasi (Subbab 3.4). Gunakan data dummy saat uji fungsionalitas.</p></div>
-    <div class="card scroll"><table class="rt"><tbody>
+    <div class="pagehead"><h1 class="title">Indikator feasibility</h1><p class="lede">Dihitung dari data di perangkat ini untuk uji feasibility alur verifikasi (Subbab 3.4). Gunakan data dummy saat uji fungsionalitas.</p></div>
+    <div class="card scroll"><table class="rt facts"><tbody>
       <tr><td>Sesi skrining diselesaikan dari yang dimulai</td><td>${done.length}/${all.length} (${pct(done.length, all.length)})</td></tr>
       <tr><td>Checklist yang disertai video</td><td>${withVid.length}/${done.length} (${pct(withVid.length, done.length)})</td></tr>
       <tr><td>Checklist dengan video yang dapat dinilai</td><td>${okVid.length}/${verVid.length} terverifikasi dengan video (${pct(okVid.length, verVid.length)})</td></tr>
@@ -878,7 +905,7 @@ function render() {
       body = tabs() + (ui.tab === "skrining" ? viewSkrining(c) : ui.tab === "stimulasi" ? viewStimulasi(c) : ui.tab === "riwayat" ? viewRiwayat(c) : viewBeranda(c));
     }
   }
-  app.innerHTML = header() + `<main>${body}</main>
+  app.innerHTML = header() + `<main${data.role === "dokter" ? ' class="wide"' : ""}>${body}</main>
     <p class="foot noprint">Prototype Tahap 1 (MVP). Peran dapat diganti di kanan atas untuk demonstrasi, dan semua data tersimpan di peramban perangkat ini.</p>`;
 }
 
